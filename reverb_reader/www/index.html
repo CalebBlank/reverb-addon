@@ -46,20 +46,20 @@
             }
 
             :root {
-                --bg-main: #e1e1e1;
-                --bg-sidebar: #f5f5f5;
+                --bg-main: #e6e5ec;
+                --bg-sidebar: #f3f2f8;
                 --bg-card: #ffffff;
-                --bg-thumb: #f0f0f0;
-                --border: #eeeeee;
+                --bg-thumb: #eceaf3;
+                --border: #ecebf2;
                 --handle: #dddddd;
                 --text: #222222;
                 --text-sub: #666666;
                 --text-muted: #aaaaaa;
                 --text-cat: #888888;
                 --hover: #e8e8e8;
-                --active-bg: #dceeff;
-                --active-fg: #005a9e;
-                --accent: #007ac2;
+                --active-bg: #e3e1f7;
+                --active-fg: #4448a8;
+                --accent: #5b5fc7;
                 --card-min: 200px;
                 --bg-sidebar-glass: rgba(245, 245, 245, 0.5);
                 --bg-main-glass: rgba(255, 255, 255, 0.5);
@@ -71,20 +71,20 @@
             }
 
             body.dark {
-                --bg-main: #0d0d0d;
-                --bg-sidebar: #252525;
-                --bg-card: #2a2a2a;
-                --bg-thumb: #333333;
-                --border: #333333;
+                --bg-main: #121318;
+                --bg-sidebar: #1f2027;
+                --bg-card: #2a2b33;
+                --bg-thumb: #353640;
+                --border: #34353f;
                 --handle: #444444;
                 --text: #e0e0e0;
                 --text-sub: #aaaaaa;
                 --text-muted: #666666;
                 --text-cat: #777777;
-                --hover: #333333;
-                --active-bg: #1a3a5c;
-                --active-fg: #5bb3f0;
-                --accent: #5bb3f0;
+                --hover: #34353f;
+                --active-bg: #2c2d52;
+                --active-fg: #c2c4ff;
+                --accent: #b4b7ff;
                 --bg-sidebar-glass: rgba(37, 37, 37, 0.75);
                 --bg-main-glass: rgba(30, 30, 30, 0.75);
                 --btn-bg: rgba(0, 0, 0, 0.11);
@@ -1070,12 +1070,15 @@
 
             .article-item {
                 cursor: pointer;
-                border-radius: 16px;
+                border-radius: 18px;
                 border: 1px solid var(--border);
                 overflow: hidden;
                 display: flex;
                 flex-direction: column;
                 background: var(--bg-card);
+                box-shadow:
+                    0 1px 2px rgba(0, 0, 0, 0.06),
+                    0 2px 6px rgba(0, 0, 0, 0.08);
                 transition:
                     width 0.26s var(--spring),
                     transform 0.26s var(--spring),
@@ -1087,6 +1090,12 @@
             }
             .article-item.no-anim {
                 animation: none;
+            }
+            /* dark: rely on the lighter card surface to float; keep shadow subtle */
+            body.dark .article-item {
+                box-shadow:
+                    0 1px 2px rgba(0, 0, 0, 0.22),
+                    0 2px 6px rgba(0, 0, 0, 0.28);
             }
             @keyframes card-in {
                 from { opacity: 0; transform: translateY(8px); }
@@ -1120,8 +1129,15 @@
             .article-item:hover {
                 border-color: transparent;
                 transform: translateY(-4px);
-                box-shadow: 0 10px 28px rgba(0, 0, 0, 0.13);
+                box-shadow:
+                    0 2px 4px rgba(0, 0, 0, 0.08),
+                    0 8px 20px rgba(0, 0, 0, 0.12);
                 z-index: 2;
+            }
+            body.dark .article-item:hover {
+                box-shadow:
+                    0 2px 6px rgba(0, 0, 0, 0.3),
+                    0 10px 24px rgba(0, 0, 0, 0.4);
             }
             .article-item:focus-visible {
                 outline: 2px solid var(--item-accent, var(--accent));
@@ -1175,13 +1191,13 @@
                 object-fit: cover;
                 background: var(--bg-thumb);
                 display: block;
-                border-radius: 16px 16px 0 0;
+                border-radius: 18px 18px 0 0;
             }
             .article-thumb-placeholder {
                 width: 100%;
                 aspect-ratio: 16 / 9;
                 background: var(--card-thumb-color, var(--bg-thumb));
-                border-radius: 16px 16px 0 0;
+                border-radius: 18px 18px 0 0;
             }
             .article-info {
                 padding: 14px 16px 20px;
@@ -1241,7 +1257,7 @@
                 height: auto;
                 aspect-ratio: unset;
                 object-fit: unset;
-                border-radius: 16px 16px 0 0;
+                border-radius: 18px 18px 0 0;
                 display: block;
             }
             .article-grid.masonry-view .article-thumb-placeholder {
@@ -1263,6 +1279,7 @@
                 border-right: none;
                 border-top: none;
                 border-bottom: none;
+                box-shadow: none;
             }
             .article-grid.list-view .article-thumb,
             .article-grid.list-view .article-thumb-placeholder {
@@ -1369,8 +1386,11 @@
                 border: 1px solid var(--border);
                 overflow: hidden;
                 display: flex;
-                flex-direction: row;
+                flex-direction: column;
                 background: var(--bg-card);
+                box-shadow:
+                    0 1px 2px rgba(0, 0, 0, 0.06),
+                    0 2px 8px rgba(0, 0, 0, 0.1);
                 transition:
                     transform 0.26s var(--spring),
                     opacity 0.35s,
@@ -1404,11 +1424,10 @@
                 opacity: 0.45;
             }
             .featured-card .thumb-frame {
-                flex: 0 0 55%;
-                height: 100%;
+                flex: 0 0 64%;
+                width: 100%;
                 overflow: hidden;
-                border-radius: 8px 0 0 8px;
-                flex-shrink: 0;
+                border-radius: 0;
                 position: relative;
             }
             .featured-card .article-thumb {
@@ -1423,29 +1442,33 @@
                 height: 100%;
                 aspect-ratio: unset;
                 border-radius: 0;
-                background: var(--bg-thumb);
+                background: var(--card-thumb-color, var(--bg-thumb));
             }
             .featured-card .article-info {
-                padding: 20px;
+                flex: 1;
+                padding: 16px 20px;
                 overflow: hidden;
                 display: flex;
                 flex-direction: column;
-                gap: 6px;
+                gap: 4px;
+                justify-content: center;
+            }
+            .featured-card .article-source {
+                font-size: 13px;
             }
             .featured-card .article-title {
                 font-size: 22px;
-                line-height: 1.3;
+                font-weight: 700;
+                line-height: 1.25;
                 display: -webkit-box;
-                -webkit-line-clamp: 3;
+                -webkit-line-clamp: 2;
                 -webkit-box-orient: vertical;
                 overflow: hidden;
             }
+            /* image-forward hero: caption is source + title only */
+            .featured-card .article-date,
             .featured-card .article-excerpt {
-                font-size: 14px;
-                display: -webkit-box;
-                -webkit-line-clamp: 7;
-                -webkit-box-orient: vertical;
-                overflow: hidden;
+                display: none;
             }
 
             .featured-card.narrow {
@@ -1468,10 +1491,10 @@
                 overflow: hidden;
             }
             .featured-card.narrow .article-title {
-                font-size: 15px;
-                font-weight: 600;
-                line-height: 1.4;
-                -webkit-line-clamp: 3;
+                font-size: 16px;
+                font-weight: 700;
+                line-height: 1.35;
+                -webkit-line-clamp: 2;
             }
             .featured-card.narrow .article-excerpt {
                 font-size: 13px;
