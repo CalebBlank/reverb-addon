@@ -72,13 +72,26 @@ DEFAULT_EXTERNAL_FEEDS = [
     "https://www.theguardian.com/food/rss",                            # Guardian Food
     "https://rss.nytimes.com/services/xml/rss/nyt/DiningandWine.xml",  # NYT Dining
     # ── design ──
-    "https://www.archdaily.com/rss/",                                  # ArchDaily
     "https://www.yankodesign.com/feed/",                              # Yanko Design
+    "https://www.designweek.co.uk/feed/",                            # Design Week
+    "https://www.creativebloq.com/feed",                            # Creative Bloq
+    "https://eyeondesign.aiga.org/feed/",                           # AIGA Eye on Design
+    "https://www.sightunseen.com/feed/",                            # Sight Unseen
+    "https://www.printmag.com/feed/",                               # PRINT Magazine
+    "https://www.underconsideration.com/brandnew/atom.xml",        # Brand New (branding)
+    # ── architecture ──
+    "https://www.archdaily.com/rss/",                              # ArchDaily
+    "https://www.architecturaldigest.com/feed/rss",               # Architectural Digest
+    "https://architizer.com/blog/feed/",                          # Architizer
+    "https://www.archpaper.com/feed/",                            # The Architect's Newspaper
     # ── art ──
     "https://hyperallergic.com/feed/",                                # Hyperallergic
     "https://news.artnet.com/feed",                                   # Artnet News
     "https://www.artnews.com/feed/",                                  # ARTnews
     "https://www.juxtapoz.com/feed/",                                # Juxtapoz
+    "https://www.booooooom.com/feed/",                              # Booooooom
+    "https://www.artforum.com/feed/",                              # Artforum
+    "https://aestheticamagazine.com/feed/",                       # Aesthetica
     # ── tech ──
     "https://www.wired.com/feed/rss",                                 # Wired
     "https://techcrunch.com/feed/",                                   # TechCrunch
