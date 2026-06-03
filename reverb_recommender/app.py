@@ -148,6 +148,8 @@ W_PROPER = 4.0          # proper-noun phrases: strongest "same subject" signal
 # Recommender tuning.
 SAME_SOURCE_PENALTY = 0.85   # light down-rank so OTHER outlets surface
 NEAR_DUP_TITLE_RATIO = 0.85  # >= this token-Jaccard on titles == same story
+EXTERNAL_BOOST = 1.5         # prioritize outside-subscription coverage in recommendations
+MAX_PER_SOURCE_IN_RESULTS = 2  # at most N results from any single outlet (variety)
 
 
 def strip_html(html_text):
@@ -687,32 +689,55 @@ def related(index, link=None, item_id=None, k=8):
             adj = sim
             if q_source and (cand.get("source") or "") == q_source:
                 adj *= SAME_SOURCE_PENALTY
+            # prioritize outside-subscription coverage
+            if cand.get("external"):
+                adj *= EXTERNAL_BOOST
 
             scored.append((adj, sim, i, cand_tt))
 
         # rank by adjusted score, tie-break on raw similarity
         scored.sort(key=lambda t: (t[0], t[1]), reverse=True)
 
+        def _result(i, adj):
+            a = index["articles"][i]
+            return {
+                "title": a.get("title"),
+                "link": a.get("link"),
+                "source": a.get("source"),
+                "feedTitle": a.get("feedTitle"),
+                "imageUrl": a.get("imageUrl"),
+                "publishedAt": a.get("publishedAt"),
+                "score": round(adj, 6),
+            }
+
+        # Pass 1: select top-k with a per-source cap so one outlet can't dominate.
         results = []
+        used = set()
+        src_count = {}
         for adj, sim, i, cand_tt in scored:
             if len(results) >= k:
                 break
-            # near-duplicate of an already-accepted result (collapse repeats)
             if any(_title_jaccard(cand_tt, prev) >= NEAR_DUP_TITLE_RATIO for prev in seen_titles):
+                continue  # near-duplicate of an already-accepted result
+            src = index["articles"][i].get("source") or ""
+            if src and src_count.get(src, 0) >= MAX_PER_SOURCE_IN_RESULTS:
                 continue
             seen_titles.append(cand_tt)
-            a = index["articles"][i]
-            results.append(
-                {
-                    "title": a.get("title"),
-                    "link": a.get("link"),
-                    "source": a.get("source"),
-                    "feedTitle": a.get("feedTitle"),
-                    "imageUrl": a.get("imageUrl"),
-                    "publishedAt": a.get("publishedAt"),
-                    "score": round(adj, 6),
-                }
-            )
+            src_count[src] = src_count.get(src, 0) + 1
+            used.add(i)
+            results.append(_result(i, adj))
+        # Pass 2: if diverse sources were scarce, fill remaining slots without the cap.
+        if len(results) < k:
+            for adj, sim, i, cand_tt in scored:
+                if len(results) >= k:
+                    break
+                if i in used:
+                    continue
+                if any(_title_jaccard(cand_tt, prev) >= NEAR_DUP_TITLE_RATIO for prev in seen_titles):
+                    continue
+                seen_titles.append(cand_tt)
+                used.add(i)
+                results.append(_result(i, adj))
         return results
     except Exception:
         return []
@@ -806,6 +831,7 @@ def merge_articles(primary, external):
         link = a.get("link")
         if link:
             seen.add(link)
+        a["external"] = False
         combined.append(a)
     for a in external:
         link = a.get("link")
@@ -813,6 +839,7 @@ def merge_articles(primary, external):
             continue
         if link:
             seen.add(link)
+        a["external"] = True
         combined.append(a)
     return combined
 
