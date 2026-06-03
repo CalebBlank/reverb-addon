@@ -68,6 +68,11 @@
                 --article-accent: var(--accent);
                 /* default: no adjustment; only adjusted when a real dominant color is active */
                 --article-accent-adj: var(--article-accent);
+                /* scrim over the open-article blurred backdrop (light theme) */
+                --article-bg-scrim: rgba(255, 255, 255, 0.62);
+                /* extra, lighter wash on the reader column for body legibility
+                   (added on top of the global scrim, so it stays subtle) */
+                --article-reader-wash: rgba(255, 255, 255, 0.28);
             }
 
             body.dark {
@@ -88,6 +93,9 @@
                 --bg-sidebar-glass: rgba(37, 37, 37, 0.75);
                 --bg-main-glass: rgba(30, 30, 30, 0.75);
                 --btn-bg: rgba(0, 0, 0, 0.11);
+                /* scrim over the open-article blurred backdrop (dark theme) */
+                --article-bg-scrim: rgba(18, 19, 24, 0.66);
+                --article-reader-wash: rgba(18, 19, 24, 0.34);
             }
 
             /* in dark mode, brighten dominant color for legibility */
@@ -1363,6 +1371,62 @@
                 mask-image: linear-gradient(175deg, black 15%, transparent 65%);
             }
 
+            /* Shared blurred backdrop tied to the OPEN article. Spans the
+               full viewport behind BOTH the feed grid (#middle) and the
+               reader pane (#right) as one continuous image. Sits above
+               #featured-bg / body::before (z-index 0) but below the panes
+               (z-index 1). Image + source-color tint are set inline from
+               showArticle(); a theme-aware scrim keeps body text readable. */
+            #article-bg {
+                position: fixed;
+                inset: 0;
+                background-size: cover;
+                background-position: top center;
+                background-blend-mode: multiply;
+                filter: blur(34px) brightness(0.8) saturate(1.6);
+                transform: scale(1.06);
+                transform-origin: top center;
+                z-index: 0;
+                opacity: 0;
+                transition: opacity 0.3s ease;
+                pointer-events: none;
+            }
+            #article-bg::after {
+                content: "";
+                position: absolute;
+                inset: 0;
+                /* Soft scrim so reader text stays legible over the blur. */
+                background: var(--article-bg-scrim, rgba(255, 255, 255, 0.62));
+            }
+            /* The shared article backdrop is a wide-mode feature: in narrow
+               mode the reader is a fixed overlay and the feed is hidden, so a
+               full-viewport backdrop behind "both panes" has no meaning. */
+            @media (max-width: 1399px) {
+                #article-bg { display: none !important; }
+            }
+            /* When an article is open (wide mode), dissolve the seam between
+               the feed grid and the reader pane so the blurred backdrop reads
+               as one continuous image: drop #right's opaque glass + its
+               left-edge shadow + square its left corners. The reader stays
+               legible via the source-tinted scrim baked into #article-bg and a
+               lighter readability wash on #right-scroll. */
+            @media (min-width: 1400px) {
+                body.article-open #right {
+                    background:
+                        radial-gradient(
+                            ellipse 80% 50% at top left,
+                            var(--panel-complement-glow, transparent) 0%,
+                            transparent 100%
+                        );
+                    box-shadow: none;
+                    border-radius: 0;
+                }
+                body.article-open #right-scroll {
+                    background: var(--article-reader-wash, rgba(255, 255, 255, 0.28));
+                    border-radius: 0 8px 8px 0;
+                }
+            }
+
             #featured-overflow {
                 height: 100%;
                 position: relative;
@@ -2544,6 +2608,7 @@
             <span class="material-symbols-rounded" style="font-size:26px">menu</span>
         </button>
         <div id="drawer-backdrop"></div>
+        <div id="article-bg"></div>
         <div id="article-backdrop"></div>
         <div id="left">
             <div id="sidebar-top">
@@ -4599,6 +4664,69 @@
                 }, 175);
             }
 
+            // Shared blurred backdrop tied to the OPEN article. Spans both the
+            // feed grid and the reader pane (separate from the carousel/feed
+            // backdrop #featured-bg). url = the article's hero image; tintRgb =
+            // the source color ("r, g, b") applied as a multiply tint.
+            let articleBackdropUrl = null;
+            let articleBackdropTint = null; // current desired source tint "r,g,b"
+            // Apply the live tint (read from articleBackdropTint, not a stale
+            // captured value) to #article-bg. multiply only when an image is
+            // present, so a tint-only wash shows as a flat source color.
+            function applyArticleTint(bg) {
+                bg.style.backgroundColor = articleBackdropTint
+                    ? `rgba(${articleBackdropTint}, 0.55)`
+                    : "";
+                bg.style.backgroundBlendMode =
+                    articleBackdropTint && articleBackdropUrl ? "multiply" : "";
+            }
+            function setArticleBackdrop(url, tintRgb) {
+                const bg = document.getElementById("article-bg");
+                if (!bg) return;
+                document.body.classList.add("article-open");
+                articleBackdropTint = tintRgb || null;
+                if (!url) {
+                    // No hero image: show a source-color wash only.
+                    articleBackdropUrl = null;
+                    bg.style.backgroundImage = "";
+                    applyArticleTint(bg);
+                    bg.style.opacity = "1";
+                    return;
+                }
+                if (url === articleBackdropUrl) {
+                    applyArticleTint(bg);
+                    bg.style.opacity = "1";
+                    return;
+                }
+                articleBackdropUrl = url;
+                bg.style.opacity = "0";
+                setTimeout(() => {
+                    if (articleBackdropUrl !== url) return;
+                    bg.style.backgroundImage = `url(${url})`;
+                    applyArticleTint(bg); // read live tint, avoid clobber race
+                    bg.style.opacity = "1";
+                }, 175);
+            }
+            // Update only the source-color tint of an already-shown backdrop.
+            function tintArticleBackdrop(tintRgb) {
+                const bg = document.getElementById("article-bg");
+                if (!bg || !document.body.classList.contains("article-open"))
+                    return;
+                articleBackdropTint = tintRgb || null;
+                applyArticleTint(bg);
+            }
+            function clearArticleBackdrop() {
+                const bg = document.getElementById("article-bg");
+                document.body.classList.remove("article-open");
+                articleBackdropUrl = null;
+                articleBackdropTint = null;
+                if (!bg) return;
+                bg.style.opacity = "0";
+                bg.style.backgroundImage = "";
+                bg.style.backgroundColor = "";
+                bg.style.backgroundBlendMode = "";
+            }
+
             function mountRefreshButton(onClick) {
                 const btn = document.getElementById("refresh-btn");
                 if (!btn) return;
@@ -4627,6 +4755,7 @@
                     .style.removeProperty("--article-source-rgb");
                 document.getElementById("article-pane").innerHTML =
                     '<div class="placeholder">Select an article</div>';
+                clearArticleBackdrop();
                 document.getElementById("narrow-related-wrap").innerHTML = "";
                 document
                     .querySelectorAll(".kb-focus")
@@ -4637,6 +4766,9 @@
             // ── Homepage ──
             function loadHomepage() {
                 currentFeedKey = "home";
+                // Returning to the carousel home: drop the open-article backdrop
+                // so the carousel's own blurred #featured-bg shows through again.
+                clearArticleBackdrop();
                 document.body.style.setProperty("--article-accent", "#ffffff");
                 viewMode = localStorage.getItem("view-mode:home") || "grid";
                 const middle = document.getElementById("middle");
@@ -6446,6 +6578,14 @@
                 `;
                 initArticleParallax();
 
+                // Shared blurred backdrop behind both panes = this article's
+                // hero image, tinted with the source color (resolved below).
+                const heroImage = getImage(item);
+                setArticleBackdrop(
+                    heroImage,
+                    sourceRgb || domainColorCache[domain] || null,
+                );
+
                 // Apply complement glow to right panel, resolve color if needed
                 const rightEl = document.getElementById("right");
                 const applyGlow = (dom) => {
@@ -6476,6 +6616,9 @@
                             `rgb(${dominant})`,
                         );
                         document.body.classList.add("has-article-accent");
+                        // Settle the shared article backdrop on the resolved
+                        // source color (covers the async resolveColor path).
+                        tintArticleBackdrop(dominant);
                     } else {
                         document.body.classList.remove("has-article-accent");
                     }
