@@ -277,7 +277,15 @@ W_PROPER = 4.0          # proper-noun phrases: strongest "same subject" signal
 SAME_SOURCE_PENALTY = 0.85   # light down-rank so OTHER outlets surface
 NEAR_DUP_TITLE_RATIO = 0.85  # >= this token-Jaccard on titles == same story
 EXTERNAL_BOOST = 1.5         # prioritize outside-subscription coverage in recommendations
-GENRE_BOOST = 1.4           # boost candidates in the SAME genre/topic as the query article
+GENRE_BOOST = 2.2           # candidate in the EXACT same genre as the query
+GENRE_GROUP_BOOST = 1.6     # adjacent genre in the same broad group (e.g. design↔art↔architecture)
+CROSS_GENRE_PENALTY = 0.45  # both genres known but in different groups → push way down
+# Broad genre groups so adjacent creative topics reinforce each other; genres not listed here
+# stand alone (only the exact-genre boost applies, everything else is cross-group).
+GENRE_GROUPS = {
+    "design": "creative", "art": "creative", "architecture": "creative",
+    "technology": "tech", "science": "tech",
+}
 MAX_PER_SOURCE_IN_RESULTS = 2  # at most N results from any single outlet (variety)
 
 
@@ -835,8 +843,13 @@ def related(index, link=None, item_id=None, k=8):
             # art article surfaces art. Cross-genre "false friends" (shared
             # keywords like "paper") rank lower but can still appear.
             cand_genre = cand.get("genre") or ""
-            if q_genre and cand_genre and q_genre == cand_genre:
-                adj *= GENRE_BOOST
+            if q_genre and cand_genre:
+                if q_genre == cand_genre:
+                    adj *= GENRE_BOOST                        # exact genre
+                elif GENRE_GROUPS.get(q_genre, q_genre) == GENRE_GROUPS.get(cand_genre, cand_genre):
+                    adj *= GENRE_GROUP_BOOST                  # adjacent genre, same group
+                else:
+                    adj *= CROSS_GENRE_PENALTY                # different group → down-rank hard
 
             scored.append((adj, sim, i, cand_tt))
 
