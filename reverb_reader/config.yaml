@@ -4,7 +4,7 @@ slug: reverb_reader
 description: >-
   Reverb web RSS reader, served over Home Assistant Ingress and proxying the
   FreshRSS Google Reader API on the same origin (no CORS, no separate login).
-url: https://github.com/blankenbakercaleb/reverb-addons
+url: https://github.com/CalebBlank/reverb-addon
 arch:
   - aarch64
   - amd64
