@@ -510,32 +510,50 @@ class Indexer:
         with urllib.request.urlopen(req, timeout=20) as resp:
             return resp.read().decode("utf-8", "replace")
 
+    def _fetch_articles(self):
+        """Log in if needed, fetch the reading-list, parse → list of articles.
+        Handles a 401 by re-logging in once. Returns [] on failure/empty."""
+        if not self._token:
+            self._token = self._login()
+            if not self._token:
+                print("[recommender] login failed", flush=True)
+                return []
+        try:
+            raw = self._fetch_reading_list(self._token, self.opts["corpus_size"])
+        except urllib.error.HTTPError as e:
+            if e.code == 401:
+                print("[recommender] 401 — re-logging in", flush=True)
+                self._token = self._login()
+                if not self._token:
+                    return []
+                raw = self._fetch_reading_list(self._token, self.opts["corpus_size"])
+            else:
+                raise
+        return parse_items(raw)
+
     def refresh(self):
         try:
             if not self.opts["freshrss_upstream"] or not self.opts["username"]:
                 print("[recommender] freshrss_upstream/username not set; skipping refresh", flush=True)
                 return
-            if not self._token:
-                self._token = self._login()
-                if not self._token:
-                    print("[recommender] login failed; keeping previous index", flush=True)
-                    return
-            try:
-                raw = self._fetch_reading_list(self._token, self.opts["corpus_size"])
-            except urllib.error.HTTPError as e:
-                if e.code == 401:
-                    print("[recommender] 401 — re-logging in", flush=True)
-                    self._token = self._login()
-                    if not self._token:
-                        return
-                    raw = self._fetch_reading_list(self._token, self.opts["corpus_size"])
-                else:
-                    raise
-            articles = parse_items(raw)
+            articles = self._fetch_articles()
+            if not articles:
+                # A successful-but-empty fetch usually means a STALE TOKEN (FreshRSS can answer
+                # 200 with a plain 'Unauthorized' body instead of 401) or a transient state.
+                # Force a fresh login and try once more before giving up.
+                print("[recommender] empty fetch; forcing re-login + retry", flush=True)
+                self._token = None
+                articles = self._fetch_articles()
             idx = build_index(articles)
-            with self._lock:
-                self._index = idx
-            print(f"[recommender] indexed {idx['count']} articles", flush=True)
+            if idx["count"] > 0:
+                with self._lock:
+                    self._index = idx
+                print(f"[recommender] indexed {idx['count']} articles", flush=True)
+            else:
+                # NEVER clobber a good index with an empty one — keep serving the last good corpus.
+                with self._lock:
+                    kept = self._index["count"]
+                print(f"[recommender] fetch still empty; keeping previous index ({kept} articles)", flush=True)
         except Exception as e:
             # outage / parse error: keep serving last good index
             print(f"[recommender] refresh failed ({e}); serving last good index", flush=True)
