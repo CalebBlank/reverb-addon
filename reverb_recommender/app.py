@@ -45,7 +45,7 @@ DEFAULTS = {
 # How many of the newest items to keep PER external feed, so the combined corpus
 # stays bounded even with many feeds (the pure-Python cosine is O(corpus^2) worst
 # case at query time, but only against the query vector — still, keep it sane).
-EXTERNAL_PER_FEED = 20
+EXTERNAL_PER_FEED = 50
 
 # A short HTTP timeout for external feed fetches (seconds).
 EXTERNAL_FETCH_TIMEOUT = 10
