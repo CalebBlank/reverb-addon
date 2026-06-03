@@ -1,0 +1,23 @@
+name: Reverb Reader
+version: "0.1.0"
+slug: reverb_reader
+description: >-
+  Reverb web RSS reader, served over Home Assistant Ingress and proxying the
+  FreshRSS Google Reader API on the same origin (no CORS, no separate login).
+url: https://github.com/blankenbakercaleb/reverb-addons
+arch:
+  - aarch64
+  - amd64
+# We provide our own entrypoint (run.sh), so let it run as-is.
+init: false
+# Ingress: the reader shows up as a sidebar tile, gated by HA's own auth.
+ingress: true
+ingress_port: 8099
+panel_icon: mdi:rss
+panel_title: Reverb
+# The FreshRSS add-on's reachable base URL (the SAME host:port you point Reverb
+# at, WITHOUT the /api/greader.php path). Example: http://192.168.1.50:7077
+options:
+  freshrss_upstream: ""
+schema:
+  freshrss_upstream: str
