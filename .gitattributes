@@ -1,0 +1,7 @@
+# This add-on is built and run on Linux — force LF so run.sh's shebang and the
+# nginx/Docker files never get CRLF (which would break the entrypoint).
+* text=auto eol=lf
+*.sh text eol=lf
+Dockerfile text eol=lf
+*.template text eol=lf
+*.yaml text eol=lf
