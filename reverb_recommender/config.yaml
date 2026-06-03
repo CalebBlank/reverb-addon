@@ -1,0 +1,35 @@
+name: Reverb Recommender
+version: "0.1.0"
+slug: reverb_recommender
+description: >-
+  Related-articles recommender for the Reverb RSS reader. Builds a TF-IDF index
+  over your FreshRSS reading-list and serves "related coverage" recommendations
+  (preferring other sources) to both the Reverb Android app and the web reader.
+url: https://github.com/CalebBlank/reverb-addon
+arch:
+  - aarch64
+  - amd64
+# The app reads /data/options.json itself and starts its own HTTP server.
+init: false
+# This is a plain JSON API (not a UI), so no ingress — expose the port directly.
+ports:
+  "8100/tcp": 8100
+ports_description:
+  "8100/tcp": Recommender HTTP API (GET /related, GET /health)
+# The FreshRSS add-on's reachable base URL — the SAME host:port you point Reverb
+# (and the Reverb Reader add-on) at, WITHOUT the /api/greader.php path.
+# Example: http://192.168.1.50:7077
+options:
+  freshrss_upstream: ""
+  username: ""
+  api_password: ""
+  refresh_minutes: 20
+  corpus_size: 300
+  k_default: 8
+schema:
+  freshrss_upstream: str
+  username: str
+  api_password: password
+  refresh_minutes: int(1,)
+  corpus_size: int(10,)
+  k_default: int(1,50)
