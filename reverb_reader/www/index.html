@@ -6233,12 +6233,84 @@
                         r.feedTitle || r.source || "",
                         r.publishedAt || "",
                         r.imageUrl || null,
-                        () => {
-                            if (link) window.open(link, "_blank");
-                        },
+                        (el) => openRecommendation(link, domain, el),
                         domain,
                     );
                 });
+            }
+
+            // Open a tapped recommendation IN the reader pane (not the browser):
+            // fetch the full article from the recommender and synthesize a single
+            // RSS <item> so the existing showArticle() pipeline can render it. On
+            // any failure (network, empty {}, no contentHtml) fall back to opening
+            // the original link in a new tab so the tap still does something.
+            async function openRecommendation(link, domain, cardEl) {
+                if (!link) return;
+                try {
+                    const res = await fetch(
+                        `recs/article?link=${encodeURIComponent(link)}`,
+                    );
+                    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+                    const a = await res.json();
+                    if (!a || !a.contentHtml) throw new Error("no article");
+
+                    const esc = (s) =>
+                        String(s == null ? "" : s)
+                            .replace(/&/g, "&amp;")
+                            .replace(/</g, "&lt;")
+                            .replace(/>/g, "&gt;")
+                            .replace(/"/g, "&quot;");
+                    const cdata = (h) =>
+                        "<![CDATA[" +
+                        String(h == null ? "" : h).replace(
+                            /]]>/g,
+                            "]]]]><![CDATA[>",
+                        ) +
+                        "]]>";
+                    const artLink = a.link || link;
+                    const pub = a.publishedAt
+                        ? new Date(a.publishedAt).toUTCString()
+                        : "";
+                    const xml =
+                        '<?xml version="1.0" encoding="UTF-8"?>' +
+                        '<rss version="2.0" ' +
+                        'xmlns:content="http://purl.org/rss/1.0/modules/content/" ' +
+                        'xmlns:dc="http://purl.org/dc/elements/1.1/" ' +
+                        'xmlns:media="http://search.yahoo.com/mrss/">' +
+                        "<channel><item>" +
+                        "<title>" + esc(a.title) + "</title>" +
+                        "<link>" + esc(artLink) + "</link>" +
+                        (pub ? "<pubDate>" + esc(pub) + "</pubDate>" : "") +
+                        (a.author
+                            ? "<dc:creator>" + esc(a.author) + "</dc:creator>"
+                            : "") +
+                        (a.imageUrl
+                            ? '<media:content url="' + esc(a.imageUrl) + '" />'
+                            : "") +
+                        "<content:encoded>" + cdata(a.contentHtml) +
+                        "</content:encoded>" +
+                        "<description>" + cdata(a.contentHtml) +
+                        "</description>" +
+                        "</item></channel></rss>";
+
+                    const doc = new DOMParser().parseFromString(
+                        xml,
+                        "text/xml",
+                    );
+                    const item = doc.querySelector("item");
+                    if (!item) throw new Error("parse failed");
+
+                    showArticle(
+                        item,
+                        cardEl,
+                        artLink,
+                        a.feedTitle || a.source || "",
+                        null,
+                        domain,
+                    );
+                } catch (e) {
+                    window.open(link, "_blank");
+                }
             }
 
             // ── Article content extractor (semantic selectors + density scoring) ──

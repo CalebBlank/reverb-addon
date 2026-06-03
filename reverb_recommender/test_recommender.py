@@ -14,7 +14,7 @@ import os
 import sys
 
 # import the pure functions; importing must not start a server or hit the network
-from app import parse_items, build_index, related
+from app import parse_items, build_index, related, article_by_link
 
 
 # ── Real captured items: load from the Reverb test resources if present, else
@@ -203,6 +203,24 @@ def main():
         check(related(index, k=5) == [], "no link and no id returns []")
     except Exception as e:
         check(False, f"empty query raised {e!r}")
+
+    # ── full-article lookup (the /article endpoint's underlying function) ──
+    print("Querying article_by_link(...)...")
+    known_link = "https://space.example.com/artemis-training"
+    art = article_by_link(index, link=known_link)
+    check(isinstance(art, dict) and art.get("link") == known_link,
+          "article_by_link returns the article for a known link")
+    check(bool(art.get("contentHtml")) and "Kennedy Space Center" in art["contentHtml"],
+          "article_by_link returns the full contentHtml")
+    # unknown link -> {} (falsy), never throws
+    try:
+        miss = article_by_link(index, link="https://nope.example.com/does-not-exist")
+        check(miss == {}, "article_by_link returns {} for an unknown link")
+    except Exception as e:
+        check(False, f"article_by_link unknown link raised {e!r}")
+    # by id also works
+    check(article_by_link(index, item_id="hand/query").get("link") == known_link,
+          "article_by_link returns the article for a known id")
 
     # ── empty index never throws ──
     try:

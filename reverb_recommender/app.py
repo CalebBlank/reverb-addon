@@ -214,6 +214,7 @@ def parse_items(raw_json):
                     "publishedAt": published_ms,
                     "author": (o.get("author") or "").strip() or None,
                     "text": strip_html(content_html)[:2000],
+                    "contentHtml": content_html,
                 }
             )
         except Exception:
@@ -436,6 +437,31 @@ def related(index, link=None, item_id=None, k=8):
         return []
 
 
+def article_by_link(index, link=None, item_id=None):
+    """Look up a single corpus article by ``link`` or ``item_id`` and return the
+    FULL article (including content HTML) as a result dict.
+
+    Reuses the same ``by_link``/``by_id`` index as :func:`related`. Returns the
+    8-field article dict on a hit, or ``{}`` when nothing matches. Never raises."""
+    try:
+        i = _find_index(index, link=link, item_id=item_id)
+        if i is None:
+            return {}
+        a = index["articles"][i]
+        return {
+            "title": a.get("title"),
+            "link": a.get("link"),
+            "source": a.get("source"),
+            "feedTitle": a.get("feedTitle"),
+            "imageUrl": a.get("imageUrl"),
+            "publishedAt": a.get("publishedAt"),
+            "author": a.get("author"),
+            "contentHtml": a.get("contentHtml"),
+        }
+    except Exception:
+        return {}
+
+
 # ════════════════════════════ server only ═════════════════════════
 # Everything below runs only when executed as a script — never on import.
 
@@ -614,6 +640,13 @@ def make_handler(indexer, opts):
                     k = max(1, min(k, 50))
                     items = related(idx, link=link, item_id=item_id, k=k)
                     self._send_json({"items": items})
+                    return
+
+                if path == "/article":
+                    link = (qs.get("link") or [None])[0]
+                    item_id = (qs.get("id") or [None])[0]
+                    # bare article dict (or {} when not found); never 500
+                    self._send_json(article_by_link(idx, link=link, item_id=item_id))
                     return
 
                 self._send_json({"error": "not found", "path": path}, status=404)
