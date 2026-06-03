@@ -11,6 +11,7 @@ server, the refresh thread, and the /data/options.json read all live under the
 ``if __name__ == "__main__":`` guard at the bottom.
 """
 
+import email.utils
 import html
 import json
 import math
@@ -21,7 +22,9 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
+import xml.etree.ElementTree as ET
 from collections import Counter
+from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 # ───────────────────────────── config ─────────────────────────────
@@ -36,7 +39,77 @@ DEFAULTS = {
     "refresh_minutes": 20,
     "corpus_size": 300,
     "k_default": 8,
+    "external_feeds": "",
 }
+
+# How many of the newest items to keep PER external feed, so the combined corpus
+# stays bounded even with many feeds (the pure-Python cosine is O(corpus^2) worst
+# case at query time, but only against the query vector — still, keep it sane).
+EXTERNAL_PER_FEED = 20
+
+# A short HTTP timeout for external feed fetches (seconds).
+EXTERNAL_FETCH_TIMEOUT = 10
+
+_FETCH_UA = (
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/120.0 Safari/537.36"
+)
+
+# Curated external news/design/tech/games/food feeds, ported from Reverb's
+# RelatedArticles.kt (the WEB_NEWS_FEEDS list). These widen the recommendation
+# corpus beyond the user's own subscriptions: /related can surface coverage from
+# outlets the user does NOT follow, and because the full content lives in the
+# corpus, /article serves them so they open in-reader. Each entry is a feed URL;
+# the human-readable feed title comes from the feed's own <title> at parse time.
+# Curated external pool — outlets the user does NOT already subscribe to, weighted
+# toward their core topics (cooking, design, art, tech, culture, science, games)
+# with a lighter variety spread. URLs validated as live RSS/Atom. Users can extend
+# via the `external_feeds` option; bad/blocked feeds are skipped at fetch time.
+DEFAULT_EXTERNAL_FEEDS = [
+    # ── cooking ──
+    "https://www.bonappetit.com/feed/rss",                              # Bon Appétit
+    "https://www.thekitchn.com/main.rss",                              # The Kitchn
+    "https://www.theguardian.com/food/rss",                            # Guardian Food
+    "https://rss.nytimes.com/services/xml/rss/nyt/DiningandWine.xml",  # NYT Dining
+    # ── design ──
+    "https://www.archdaily.com/rss/",                                  # ArchDaily
+    "https://www.yankodesign.com/feed/",                              # Yanko Design
+    # ── art ──
+    "https://hyperallergic.com/feed/",                                # Hyperallergic
+    "https://news.artnet.com/feed",                                   # Artnet News
+    "https://www.artnews.com/feed/",                                  # ARTnews
+    "https://www.juxtapoz.com/feed/",                                # Juxtapoz
+    # ── tech ──
+    "https://www.wired.com/feed/rss",                                 # Wired
+    "https://techcrunch.com/feed/",                                   # TechCrunch
+    "https://www.engadget.com/rss.xml",                              # Engadget
+    "https://www.technologyreview.com/feed/",                        # MIT Tech Review
+    "https://www.theregister.com/headlines.atom",                    # The Register
+    # ── culture ──
+    "https://www.theatlantic.com/feed/all/",                         # The Atlantic
+    "https://aeon.co/feed.rss",                                      # Aeon
+    "https://www.theguardian.com/culture/rss",                      # Guardian Culture
+    "https://www.newyorker.com/feed/culture",                       # New Yorker Culture
+    # ── science ──
+    "https://api.quantamagazine.org/feed/",                         # Quanta
+    "https://www.sciencedaily.com/rss/all.xml",                    # ScienceDaily
+    "https://www.scientificamerican.com/platform/syndication/rss/", # Scientific American
+    "https://www.sciencenews.org/feed",                            # Science News
+    # ── games ──
+    "https://www.eurogamer.net/feed",                              # Eurogamer
+    "https://www.pcgamer.com/rss/",                               # PC Gamer
+    "https://kotaku.com/rss",                                     # Kotaku
+    # ── variety: world / business / health / sports / climate ──
+    "http://feeds.bbci.co.uk/news/rss.xml",                       # BBC News
+    "https://feeds.npr.org/1001/rss.xml",                        # NPR News
+    "https://www.theguardian.com/world/rss",                     # Guardian World
+    "https://www.aljazeera.com/xml/rss/all.xml",                # Al Jazeera
+    "http://feeds.bbci.co.uk/news/business/rss.xml",            # BBC Business
+    "https://feeds.npr.org/1128/rss.xml",                       # NPR Health
+    "http://feeds.bbci.co.uk/sport/rss.xml",                   # BBC Sport
+    "https://grist.org/feed/",                                 # Grist (climate)
+    "https://www.theguardian.com/environment/rss",            # Guardian Environment
+]
 
 # ───────────────────────── text / tokenizing ──────────────────────
 
@@ -219,6 +292,214 @@ def parse_items(raw_json):
             )
         except Exception:
             # one bad item must never sink the corpus
+            continue
+    return out
+
+
+# ─────────────────── external RSS/Atom feed parsing ────────────────
+# Pure (no network): turn raw feed XML into the SAME article dict shape as
+# ``parse_items`` so external items are indistinguishable downstream. The fetcher
+# below (``fetch_feed``) does the I/O and hands raw bytes to ``parse_feed``.
+
+
+def _localname(tag):
+    """Strip an ElementTree '{namespace}local' tag down to its local name.
+
+    ElementTree expands prefixes to '{uri}local', so ``content:encoded`` becomes
+    ``{http://purl.org/rss/1.0/modules/content/}encoded``. Matching on the local
+    name lets one walk handle RSS and Atom regardless of which prefixes a feed
+    happens to use."""
+    if not isinstance(tag, str):
+        return ""
+    return tag.rsplit("}", 1)[-1].lower()
+
+
+def _child_text(elem, *local_names):
+    """First non-empty text of a direct child whose local-name is in *local_names*."""
+    wanted = {n.lower() for n in local_names}
+    for child in list(elem):
+        if _localname(child.tag) in wanted:
+            txt = (child.text or "").strip()
+            if txt:
+                return txt
+    return None
+
+
+def _to_epoch_ms(date_str):
+    """Parse an RSS RFC-822 ``pubDate`` or an Atom ISO-8601 date to epoch ms.
+
+    Defensive: returns ``None`` on anything unparseable. Note Python 3.10's
+    ``datetime.fromisoformat`` rejects a trailing 'Z', so we normalize it to
+    '+00:00' first; RFC-822 dates go through ``email.utils``."""
+    if not date_str:
+        return None
+    s = date_str.strip()
+    # RFC-822 (RSS <pubDate>): "Tue, 02 Jun 2026 10:00:00 GMT"
+    try:
+        dt = email.utils.parsedate_to_datetime(s)
+        if dt is not None:
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=timezone.utc)
+            return int(dt.timestamp() * 1000)
+    except Exception:
+        pass
+    # ISO-8601 (Atom <updated>/<published>): "2026-06-02T10:00:00Z"
+    try:
+        iso = s
+        if iso.endswith("Z") or iso.endswith("z"):
+            iso = iso[:-1] + "+00:00"
+        dt = datetime.fromisoformat(iso)
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return int(dt.timestamp() * 1000)
+    except Exception:
+        return None
+
+
+def _atom_link(entry, base_url):
+    """Pick the best <link> from an Atom entry: rel='alternate' (or no rel),
+    skipping rel='self'/'enclosure'. Resolved to an absolute URL."""
+    fallback = None
+    for child in list(entry):
+        if _localname(child.tag) != "link":
+            continue
+        rel = (child.get("rel") or "").lower()
+        href = (child.get("href") or "").strip()
+        if not href:
+            continue
+        if rel in ("self", "enclosure"):
+            continue
+        if rel in ("", "alternate"):
+            return urllib.parse.urljoin(base_url or "", href)
+        if fallback is None:
+            fallback = urllib.parse.urljoin(base_url or "", href)
+    return fallback
+
+
+def _media_image(entry):
+    """An image URL from media:content / media:thumbnail / <enclosure> children."""
+    for child in list(entry):
+        ln = _localname(child.tag)
+        # NOTE: Atom <content> also has local-name "content"; it's disambiguated
+        # from media:content below by the `url` attribute (Atom <content> has none,
+        # so the `if not url: continue` skips it and a real media:content wins).
+        if ln in ("content", "thumbnail", "enclosure"):
+            url = (child.get("url") or "").strip()
+            typ = (child.get("type") or "").lower()
+            medium = (child.get("medium") or "").lower()
+            if not url:
+                continue
+            # media:content can be non-image; only accept image-ish ones.
+            if ln in ("content", "enclosure"):
+                if typ.startswith("image") or medium == "image" or (not typ and not medium and ln == "thumbnail"):
+                    if url.startswith("http"):
+                        return url
+                continue
+            if url.startswith("http"):  # media:thumbnail is always an image
+                return url
+    return None
+
+
+def parse_feed(xml_bytes, feed_url=""):
+    """Parse raw RSS 2.0 / Atom feed bytes into a list of article dicts matching
+    ``parse_items``' shape. Pure: no network, never raises (returns [] on a
+    malformed/empty document; skips individual bad entries).
+
+    Handles RSS 2.0 (<item> with <title>/<link>/<description>/content:encoded/
+    <pubDate>/media:content/<enclosure>) and Atom (<entry> with <title>/
+    <link href>/<content>/<summary>/<updated>/<published>)."""
+    try:
+        if isinstance(xml_bytes, str):
+            # ET.fromstring rejects a str that carries an encoding declaration;
+            # encode to bytes so ET honors the declared charset.
+            xml_bytes = xml_bytes.encode("utf-8")
+        root = ET.fromstring(xml_bytes)
+    except Exception:
+        return []
+
+    # Feed <title>: for RSS it's channel/title; for Atom it's feed/title.
+    feed_title = ""
+    channel = None
+    for child in list(root):
+        if _localname(child.tag) == "channel":
+            channel = child
+            break
+    container = channel if channel is not None else root
+    ft = _child_text(container, "title")
+    if ft:
+        feed_title = strip_html(ft)
+
+    out = []
+    # RSS items live under <channel>; Atom <entry>s live under the root <feed>.
+    candidates = []
+    for parent in ((channel,) if channel is not None else (root,)):
+        if parent is None:
+            continue
+        for child in list(parent):
+            ln = _localname(child.tag)
+            if ln in ("item", "entry"):
+                candidates.append((ln, child))
+
+    for kind, node in candidates:
+        try:
+            title = strip_html(_child_text(node, "title") or "")
+            if not title:
+                continue
+
+            if kind == "entry":  # Atom
+                link = _atom_link(node, feed_url)
+            else:  # RSS — <link> is element text
+                link = _child_text(node, "link")
+                if link:
+                    link = urllib.parse.urljoin(feed_url or "", link.strip())
+            if not link or not link.startswith("http"):
+                continue
+
+            # Content: prefer the richer content:encoded / <content>, then
+            # <description> / <summary>.
+            content_html = (
+                _child_text(node, "encoded")        # content:encoded (RSS)
+                or _child_text(node, "content")     # Atom <content>
+                or _child_text(node, "description")  # RSS <description>
+                or _child_text(node, "summary")     # Atom <summary>
+                or ""
+            )
+
+            image_url = _media_image(node) or first_image(content_html)
+
+            published_ms = _to_epoch_ms(
+                _child_text(node, "pubDate")        # RSS
+                or _child_text(node, "published")   # Atom
+                or _child_text(node, "updated")     # Atom
+                or _child_text(node, "date")        # Dublin Core <dc:date>
+            )
+
+            author = None
+            # RSS <author>/dc:creator are text; Atom <author> wraps a <name>.
+            for child in list(node):
+                if _localname(child.tag) in ("author", "creator"):
+                    name = _child_text(child, "name")  # Atom <author><name>
+                    val = (name or (child.text or "")).strip()
+                    if val:
+                        author = strip_html(val)
+                        break
+
+            out.append(
+                {
+                    "id": None,
+                    "title": title,
+                    "link": link,
+                    "source": _host_of(link) or "",
+                    "feedTitle": feed_title,
+                    "imageUrl": image_url,
+                    "publishedAt": published_ms,
+                    "author": author,
+                    "text": strip_html(content_html)[:2000],
+                    "contentHtml": content_html,
+                }
+            )
+        except Exception:
+            # one bad entry must never sink the feed
             continue
     return out
 
@@ -466,6 +747,76 @@ def article_by_link(index, link=None, item_id=None):
 # Everything below runs only when executed as a script — never on import.
 
 
+def fetch_feed(url, timeout=EXTERNAL_FETCH_TIMEOUT):
+    """Fetch a feed URL and parse it into article dicts (newest ``EXTERNAL_PER_FEED``).
+
+    Sets a browser-ish User-Agent (some hosts 403 the default urllib agent),
+    follows redirects (the default opener does), uses a short timeout. Defensive:
+    a malformed/unreachable feed is logged and yields [] — never raises."""
+    try:
+        req = urllib.request.Request(url, method="GET")
+        req.add_header("User-Agent", _FETCH_UA)
+        req.add_header("Accept", "application/rss+xml, application/atom+xml, application/xml, text/xml, */*")
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            raw = resp.read()  # raw bytes: let ET honor the declared charset
+        items = parse_feed(raw, feed_url=url)
+        # Newest first, then cap, so the corpus stays bounded.
+        items.sort(key=lambda a: (a.get("publishedAt") or 0), reverse=True)
+        return items[:EXTERNAL_PER_FEED]
+    except Exception as e:
+        print(f"[recommender] external feed failed ({url}): {e}", flush=True)
+        return []
+
+
+def resolve_external_feeds(raw_option):
+    """Merge the built-in default feed list with the user's ``external_feeds``
+    option (newline- and/or comma-separated), deduped, order-stable (defaults
+    first). Returns a list of feed URLs."""
+    feeds = list(DEFAULT_EXTERNAL_FEEDS)
+    if raw_option:
+        for chunk in re.split(r"[\r\n,]+", str(raw_option)):
+            u = chunk.strip()
+            if u:
+                feeds.append(u)
+    seen = set()
+    out = []
+    for u in feeds:
+        if u not in seen:
+            seen.add(u)
+            out.append(u)
+    return out
+
+
+def fetch_external_articles(feed_urls):
+    """Fetch + parse every external feed, returning one combined article list.
+    Per-feed failures are swallowed (logged in ``fetch_feed``); this never raises."""
+    out = []
+    for url in feed_urls:
+        out.extend(fetch_feed(url))
+    return out
+
+
+def merge_articles(primary, external):
+    """Combine the user's FreshRSS articles with external articles into one list,
+    deduped by ``link``. The user's own copy wins when a link appears in both
+    (primary is seeded first), so /article serves their version."""
+    seen = set()
+    combined = []
+    for a in primary:
+        link = a.get("link")
+        if link:
+            seen.add(link)
+        combined.append(a)
+    for a in external:
+        link = a.get("link")
+        if link and link in seen:
+            continue
+        if link:
+            seen.add(link)
+        combined.append(a)
+    return combined
+
+
 def load_options():
     opts = dict(DEFAULTS)
     try:
@@ -500,6 +851,12 @@ class Indexer:
         self._token = None
         self._lock = threading.Lock()
         self._index = empty_index()
+        # Built-in defaults merged with the user's external_feeds option (deduped).
+        self.external_feeds = resolve_external_feeds(opts.get("external_feeds"))
+        print(
+            f"[recommender] {len(self.external_feeds)} external feeds configured",
+            flush=True,
+        )
 
     @property
     def index(self):
@@ -559,27 +916,52 @@ class Indexer:
 
     def refresh(self):
         try:
+            # 1) The user's FreshRSS reading-list (own subscriptions). Its fetch
+            #    failures must not stop external indexing, so wrap it.
+            fresh_articles = []
             if not self.opts["freshrss_upstream"] or not self.opts["username"]:
-                print("[recommender] freshrss_upstream/username not set; skipping refresh", flush=True)
-                return
-            articles = self._fetch_articles()
-            if not articles:
-                # A successful-but-empty fetch usually means a STALE TOKEN (FreshRSS can answer
-                # 200 with a plain 'Unauthorized' body instead of 401) or a transient state.
-                # Force a fresh login and try once more before giving up.
-                print("[recommender] empty fetch; forcing re-login + retry", flush=True)
-                self._token = None
-                articles = self._fetch_articles()
-            idx = build_index(articles)
+                print("[recommender] freshrss_upstream/username not set; skipping FreshRSS fetch", flush=True)
+            else:
+                try:
+                    fresh_articles = self._fetch_articles()
+                    if not fresh_articles:
+                        # A successful-but-empty fetch usually means a STALE TOKEN (FreshRSS can answer
+                        # 200 with a plain 'Unauthorized' body instead of 401) or a transient state.
+                        # Force a fresh login and try once more before giving up.
+                        print("[recommender] empty FreshRSS fetch; forcing re-login + retry", flush=True)
+                        self._token = None
+                        fresh_articles = self._fetch_articles()
+                except Exception as e:
+                    print(f"[recommender] FreshRSS fetch failed ({e}); continuing with external only", flush=True)
+                    fresh_articles = []
+
+            # 2) External feeds (sources the user does NOT subscribe to). Wrapped
+            #    independently so an external outage can't drop the FreshRSS corpus.
+            external_articles = []
+            if self.external_feeds:
+                try:
+                    external_articles = fetch_external_articles(self.external_feeds)
+                    print(f"[recommender] fetched {len(external_articles)} external articles "
+                          f"from {len(self.external_feeds)} feeds", flush=True)
+                except Exception as e:
+                    print(f"[recommender] external fetch failed ({e}); continuing with FreshRSS only", flush=True)
+                    external_articles = []
+
+            # 3) Combine (FreshRSS + external), dedup by link (user's copy wins).
+            combined = merge_articles(fresh_articles, external_articles)
+
+            idx = build_index(combined)
             if idx["count"] > 0:
                 with self._lock:
                     self._index = idx
-                print(f"[recommender] indexed {idx['count']} articles", flush=True)
+                print(f"[recommender] indexed {idx['count']} articles "
+                      f"({len(fresh_articles)} FreshRSS + {len(external_articles)} external, deduped)",
+                      flush=True)
             else:
                 # NEVER clobber a good index with an empty one — keep serving the last good corpus.
                 with self._lock:
                     kept = self._index["count"]
-                print(f"[recommender] fetch still empty; keeping previous index ({kept} articles)", flush=True)
+                print(f"[recommender] combined fetch still empty; keeping previous index ({kept} articles)", flush=True)
         except Exception as e:
             # outage / parse error: keep serving last good index
             print(f"[recommender] refresh failed ({e}); serving last good index", flush=True)

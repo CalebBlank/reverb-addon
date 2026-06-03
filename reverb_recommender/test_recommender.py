@@ -12,9 +12,156 @@ a small hand-made corpus PLUS the real captured items, and checks the contract.
 import json
 import os
 import sys
+import urllib.parse
 
 # import the pure functions; importing must not start a server or hit the network
-from app import parse_items, build_index, related, article_by_link
+from app import (
+    parse_items,
+    parse_feed,
+    build_index,
+    related,
+    article_by_link,
+    resolve_external_feeds,
+    merge_articles,
+)
+
+
+# ── Inline external-feed fixtures. These deliberately include the realistic-but-
+#    tricky cases the offline test would otherwise dodge: a namespaced
+#    content:encoded wrapped in CDATA, a namespaced media:content image, an RFC-822
+#    <pubDate> (RSS), an Atom <updated> with a trailing 'Z' (Python 3.10's
+#    fromisoformat rejects 'Z' unless normalized), an <?xml encoding?> declaration
+#    in a str (ET.fromstring rejects that unless we encode to bytes first), and
+#    relative links that must resolve absolute against the feed URL. ────────────
+
+RSS_FIXTURE = """<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0"
+     xmlns:content="http://purl.org/rss/1.0/modules/content/"
+     xmlns:media="http://search.yahoo.com/mrss/"
+     xmlns:dc="http://purl.org/dc/elements/1.1/">
+  <channel>
+    <title>Example Tech Wire</title>
+    <link>https://tech.example.com/</link>
+    <description>Latest technology coverage</description>
+    <item>
+      <title>Microsoft unveils Surface Laptop Ultra with Nvidia RTX Spark chips</title>
+      <link>https://tech.example.com/microsoft-surface-laptop-ultra</link>
+      <description>Short summary that should lose to content:encoded.</description>
+      <content:encoded><![CDATA[<figure><img src="https://img.example.com/surface.jpg"></figure><p>Microsoft has announced the Surface Laptop Ultra, a 16-inch laptop powered by Nvidia RTX Spark chips, positioned against the MacBook Pro.</p>]]></content:encoded>
+      <media:content url="https://media.example.com/surface-media.jpg" medium="image" type="image/jpeg"/>
+      <pubDate>Tue, 02 Jun 2026 10:30:00 GMT</pubDate>
+      <dc:creator>Tom Warren</dc:creator>
+    </item>
+    <item>
+      <title>Relative link item resolves against the feed URL</title>
+      <link>/relative/path-item</link>
+      <description><![CDATA[<p>A body that mentions Microsoft and Nvidia and Surface again so it has tokens.</p>]]></description>
+      <media:thumbnail url="https://media.example.com/thumb.jpg"/>
+      <pubDate>Mon, 01 Jun 2026 09:00:00 +0000</pubDate>
+    </item>
+  </channel>
+</rss>
+"""
+
+ATOM_FIXTURE = """<?xml version="1.0" encoding="utf-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom"
+      xmlns:media="http://search.yahoo.com/mrss/">
+  <title>Example Atom Journal</title>
+  <link rel="self" href="https://atom.example.org/feed"/>
+  <link rel="alternate" href="https://atom.example.org/"/>
+  <updated>2026-06-02T12:00:00Z</updated>
+  <entry>
+    <title>Nvidia RTX Spark powers a new wave of Microsoft Surface devices</title>
+    <link rel="alternate" href="https://atom.example.org/nvidia-surface-wave"/>
+    <link rel="self" href="https://atom.example.org/nvidia-surface-wave.atom"/>
+    <summary>Summary fallback.</summary>
+    <content type="html"><![CDATA[<p>Nvidia's RTX Spark chips are at the heart of Microsoft's new Surface Laptop Ultra, signaling a shift in premium laptop hardware.</p>]]></content>
+    <media:content url="https://media.example.org/nvidia.jpg" type="image/png"/>
+    <updated>2026-06-02T11:45:00Z</updated>
+    <published>2026-06-02T11:00:00Z</published>
+    <author><name>Jane Reporter</name></author>
+  </entry>
+</feed>
+"""
+
+
+def test_external_feed_parsers():
+    print("Parsing inline RSS 2.0 fixture...")
+    rss = parse_feed(RSS_FIXTURE, feed_url="https://tech.example.com/feed.xml")
+    check(len(rss) == 2, "RSS fixture yields 2 articles")
+    if rss:
+        a = rss[0]
+        check(a["feedTitle"] == "Example Tech Wire", "RSS feedTitle from channel <title>")
+        check(a["link"] == "https://tech.example.com/microsoft-surface-laptop-ultra",
+              "RSS link is absolute http(s)")
+        check(a["source"] == "tech.example.com", "RSS source is the www-stripped host")
+        check(bool(a["contentHtml"]) and "RTX Spark" in a["contentHtml"],
+              "RSS content:encoded (CDATA) preferred over <description>")
+        check(bool(a["text"]) and "RTX Spark" in a["text"], "RSS text populated from content (for TF-IDF)")
+        check(a["imageUrl"] == "https://media.example.com/surface-media.jpg",
+              "RSS imageUrl from media:content")
+        check(a["publishedAt"] and a["publishedAt"] > 1_000_000_000_000,
+              "RSS publishedAt is epoch milliseconds (RFC-822 pubDate)")
+        check(a["author"] == "Tom Warren", "RSS author from dc:creator")
+    # relative link resolves absolute against the feed URL
+    rel = rss[1] if len(rss) > 1 else {}
+    check(rel.get("link") == "https://tech.example.com/relative/path-item",
+          "RSS relative <link> resolved absolute against feed URL")
+    check(rel.get("imageUrl") == "https://media.example.com/thumb.jpg",
+          "RSS imageUrl from media:thumbnail")
+
+    print("Parsing inline Atom fixture...")
+    atom = parse_feed(ATOM_FIXTURE, feed_url="https://atom.example.org/feed")
+    check(len(atom) == 1, "Atom fixture yields 1 article")
+    if atom:
+        b = atom[0]
+        check(b["feedTitle"] == "Example Atom Journal", "Atom feedTitle from feed <title>")
+        check(b["link"] == "https://atom.example.org/nvidia-surface-wave",
+              "Atom link picks rel='alternate' (not rel='self'), absolute")
+        check(b["source"] == "atom.example.org", "Atom source is the host")
+        check(bool(b["contentHtml"]) and "RTX Spark" in b["contentHtml"],
+              "Atom <content> (CDATA) preferred over <summary>")
+        check(bool(b["text"]) and "RTX Spark" in b["text"], "Atom text populated for TF-IDF")
+        check(b["imageUrl"] == "https://media.example.org/nvidia.jpg",
+              "Atom imageUrl from media:content")
+        check(b["publishedAt"] and b["publishedAt"] > 1_000_000_000_000,
+              "Atom publishedAt is epoch ms (ISO-8601 with trailing 'Z')")
+        check(b["author"] == "Jane Reporter", "Atom author from <author><name>")
+
+    # malformed / empty input must never raise; returns []
+    print("Parsing malformed / empty feed input...")
+    try:
+        check(parse_feed("this is not xml at all") == [], "malformed feed XML returns [] (no throw)")
+        check(parse_feed("") == [], "empty feed string returns []")
+        check(parse_feed(b"") == [], "empty feed bytes returns []")
+    except Exception as e:
+        check(False, f"malformed feed raised {e!r}")
+
+
+def test_resolve_and_merge():
+    print("Testing resolve_external_feeds + merge_articles...")
+    # built-in defaults present even with blank option
+    base = resolve_external_feeds("")
+    check(len(base) > 0, "resolve_external_feeds returns the built-in defaults when option blank")
+    # extra feeds merged (newline + comma separated), deduped, defaults kept
+    merged = resolve_external_feeds("https://extra.example.com/a\nhttps://extra.example.com/b, https://extra.example.com/a")
+    check("https://extra.example.com/a" in merged and "https://extra.example.com/b" in merged,
+          "user external_feeds (newline/comma separated) are merged in")
+    check(merged.count("https://extra.example.com/a") == 1, "duplicate user feed URL is deduped")
+    check(all(d in merged for d in base), "defaults remain after merging user feeds")
+
+    # merge_articles: dedup by link, the user's (primary) copy wins
+    primary = [{"link": "https://shared.example.com/x", "title": "User copy", "feedTitle": "Mine"}]
+    external = [
+        {"link": "https://shared.example.com/x", "title": "External copy", "feedTitle": "Outlet"},
+        {"link": "https://only.example.com/y", "title": "External only", "feedTitle": "Outlet"},
+    ]
+    combined = merge_articles(primary, external)
+    by_link = {a["link"]: a for a in combined}
+    check(len(combined) == 2, "merge dedups the shared link (2 unique articles)")
+    check(by_link["https://shared.example.com/x"]["title"] == "User copy",
+          "on a shared link, the user's own copy is kept (prefer primary)")
+    check("https://only.example.com/y" in by_link, "external-only article is included")
 
 
 # ── Real captured items: load from the Reverb test resources if present, else
@@ -228,6 +375,52 @@ def main():
         check(related(empty, link="x", k=5) == [], "related() on empty index returns []")
     except Exception as e:
         check(False, f"empty index raised {e!r}")
+
+    # ── external feed parsing (inline RSS + Atom fixtures) ──
+    test_external_feed_parsers()
+    test_resolve_and_merge()
+
+    # ── an EXTERNAL article, mixed into a build_index corpus, is returned by related() ──
+    print("Mixing external (parse_feed) articles into the corpus and querying related()...")
+    external = (
+        parse_feed(RSS_FIXTURE, feed_url="https://tech.example.com/feed.xml")
+        + parse_feed(ATOM_FIXTURE, feed_url="https://atom.example.org/feed")
+    )
+    # A FreshRSS-style query article on the same Microsoft/Nvidia/Surface story.
+    query_corpus = {
+        "items": [
+            {
+                "id": "mix/query",
+                "published": 1780500000,
+                "title": "Microsoft Surface Laptop Ultra debuts with Nvidia RTX Spark silicon",
+                "canonical": [{"href": "https://myfeeds.example.com/surface-ultra"}],
+                "origin": {"htmlUrl": "https://myfeeds.example.com/", "title": "My Subscriptions"},
+                "summary": {"content": "<p>Microsoft's Surface Laptop Ultra uses Nvidia RTX Spark chips, a premium laptop aimed at the MacBook Pro.</p>"},
+            },
+        ]
+    }
+    mixed = parse_items(json.dumps(query_corpus)) + external
+    mixed_index = build_index(mixed)
+    check(mixed_index["count"] == len(mixed), "mixed corpus (FreshRSS + external) indexes fully")
+
+    mres = related(mixed_index, link="https://myfeeds.example.com/surface-ultra", k=5)
+    mlinks = [r["link"] for r in mres]
+    print(f"  returned {len(mres)} items: {[r['title'][:45] for r in mres]}")
+    external_links = {a["link"] for a in external}
+    check(any(l in external_links for l in mlinks),
+          "an external (non-subscribed) article is recommended for the query")
+
+    # ── /article serves the external article's full content (open-in-reader) ──
+    ext_link = next((l for l in mlinks if l in external_links), None)
+    if ext_link:
+        ext_art = article_by_link(mixed_index, link=ext_link)
+        check(bool(ext_art.get("contentHtml")),
+              "article_by_link returns the external article's full contentHtml (open-in-reader)")
+        expected_host = urllib.parse.urlparse(ext_link).hostname or ""
+        if expected_host.startswith("www."):
+            expected_host = expected_host[4:]
+        check(ext_art.get("source") == expected_host,
+              "external article's source is its host")
 
     print()
     print(f"RESULTS: {PASS} passed, {FAIL} failed")
