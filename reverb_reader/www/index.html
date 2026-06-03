@@ -6182,135 +6182,63 @@
                     });
                 }
 
-                // ── Related articles (async keyword search) ──
+                // ── Related articles (server-side recommender) ──
+                // Fetched same-origin through the reader add-on's nginx
+                // (recs/ → recommender /), so it works under HA ingress with
+                // no CORS. The fetch is async and must never block article
+                // rendering: on any failure or empty result we render nothing
+                // (not even a header) so the section just disappears.
+                const articleLink = getLink(item);
+                if (!articleLink) return;
+
+                let items = [];
+                try {
+                    const res = await fetch(
+                        `recs/related?link=${encodeURIComponent(articleLink)}&k=8`,
+                    );
+                    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+                    const data = await res.json();
+                    items = Array.isArray(data?.items) ? data.items : [];
+                } catch (e) {
+                    return; // network/parse error → no recommendations
+                }
+
+                // The panel is reused across articles. Bail if the user moved
+                // on (or closed the panel) while the fetch was in flight, so we
+                // never render one article's recommendations into another.
+                if (!panel.isConnected) return;
+                if (item !== currentArticleItem) return;
+                if (!items.length) return;
+
                 const relatedH3 = document.createElement("h3");
                 if (linked.length > 0) relatedH3.className = "section-gap";
                 relatedH3.textContent = "Related Articles";
                 panel.appendChild(relatedH3);
 
-                const title = getText(item, "title");
-                const desc = stripHtml(
-                    getText(
-                        item,
-                        "description",
-                        "summary",
-                        "content:encoded",
-                        "content",
-                    ),
-                );
-                const rawText = title + " " + desc;
-                const properNouns = extractProperNouns(rawText);
-                const keywords = extractKeywords(rawText);
-                if (!properNouns.length && !keywords.length) {
-                    panel.appendChild(
-                        Object.assign(document.createElement("div"), {
-                            className: "placeholder",
-                            textContent: "No keywords found.",
-                        }),
-                    );
-                    return;
-                }
-
-                const placeholder = Object.assign(
-                    document.createElement("div"),
-                    { className: "placeholder", textContent: "Searching…" },
-                );
-                panel.appendChild(placeholder);
-
-                const seenTitles = new Set();
-                const allResults = [];
-                const currentGenres =
-                    (currentFeedCategory &&
-                        CATEGORY_GENRES[currentFeedCategory]) ||
-                    [];
-
-                // Web news feeds
-                await Promise.allSettled(
-                    WEB_NEWS_FEEDS.map(async (feed) => {
-                        const feedGenres = feed.genres || [];
-                        const genreMatch =
-                            currentGenres.length > 0 &&
-                            feedGenres.some((g) => currentGenres.includes(g));
-                        try {
-                            const xml = await fetchFeed(feed.url);
-                            if (!panel.isConnected) return;
-                            const doc = new DOMParser().parseFromString(
-                                xml,
-                                "text/xml",
-                            );
-                            for (const candidate of [
-                                ...doc.querySelectorAll("item, entry"),
-                            ]) {
-                                const ct = getText(
-                                    candidate,
-                                    "title",
-                                ).toLowerCase();
-                                const cd = stripHtml(
-                                    getText(
-                                        candidate,
-                                        "description",
-                                        "summary",
-                                    ),
-                                ).toLowerCase();
-                                const score = scoreRelevance(
-                                    properNouns,
-                                    keywords,
-                                    ct,
-                                    cd,
-                                    genreMatch,
-                                );
-                                if (score === 0) continue;
-                                const t = getText(candidate, "title");
-                                if (seenTitles.has(t.toLowerCase())) continue;
-                                seenTitles.add(t.toLowerCase());
-                                const link = getLink(candidate);
-                                allResults.push({
-                                    title: t,
-                                    source: feed.title,
-                                    date: getText(
-                                        candidate,
-                                        "pubDate",
-                                        "published",
-                                        "updated",
-                                    ),
-                                    image: getImage(candidate),
-                                    score,
-                                    domain: feedDomain(feed),
-                                    onClick: () => window.open(link, "_blank"),
-                                });
-                            }
-                        } catch (e) {}
-                    }),
-                );
-
-                if (!panel.isConnected) return;
-                placeholder.remove();
-                allResults.sort((a, b) => b.score - a.score);
-
-                if (allResults.length === 0) {
-                    panel.appendChild(
-                        Object.assign(document.createElement("div"), {
-                            className: "placeholder",
-                            textContent: "No related articles found.",
-                        }),
-                    );
-                    return;
-                }
                 const relatedContainer = document.createElement("div");
                 panel.appendChild(relatedContainer);
-                allResults
-                    .slice(0, 8)
-                    .forEach((r) =>
-                        appendRelatedItem(
-                            relatedContainer,
-                            r.title,
-                            r.source,
-                            r.date,
-                            r.image,
-                            r.onClick,
-                            r.domain,
-                        ),
+                items.forEach((r) => {
+                    const link = r.link || "";
+                    let domain = "";
+                    try {
+                        if (link)
+                            domain = new URL(link).hostname.replace(
+                                /^www\./,
+                                "",
+                            );
+                    } catch (e) {}
+                    appendRelatedItem(
+                        relatedContainer,
+                        r.title || "",
+                        r.feedTitle || r.source || "",
+                        r.publishedAt || "",
+                        r.imageUrl || null,
+                        () => {
+                            if (link) window.open(link, "_blank");
+                        },
+                        domain,
                     );
+                });
             }
 
             // ── Article content extractor (semantic selectors + density scoring) ──

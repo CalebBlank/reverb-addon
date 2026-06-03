@@ -1,5 +1,5 @@
 name: Reverb Reader
-version: "0.1.3"
+version: "0.1.4"
 slug: reverb_reader
 description: >-
   Reverb web RSS reader, served over Home Assistant Ingress and proxying the
@@ -19,5 +19,7 @@ panel_title: Reverb
 # at, WITHOUT the /api/greader.php path). Example: http://192.168.1.50:7077
 options:
   freshrss_upstream: ""
+  recommender_upstream: ""
 schema:
   freshrss_upstream: str
+  recommender_upstream: str
