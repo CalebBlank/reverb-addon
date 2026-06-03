@@ -124,6 +124,121 @@ DEFAULT_EXTERNAL_FEEDS = [
     "https://www.theguardian.com/environment/rss",            # Guardian Environment
 ]
 
+# ───────────────────────────── genre ──────────────────────────────
+# A SOURCE-GENRE signal: each article carries a normalized lowercase ``genre``
+# string drawn from the taxonomy below. ``related()`` boosts candidates whose
+# genre matches the query article's, so a cooking article surfaces cooking, an
+# art article surfaces art — and cross-topic keyword "false friends" (an art
+# piece about "paper" pulling an "e-paper display" tech story, or "rice paper"
+# recipe) get down-weighted relative to true same-genre matches.
+
+# Map every DEFAULT_EXTERNAL_FEEDS URL -> genre, grouped exactly like the topic
+# sections above. Keyed by the EXACT feed URL (not host): several outlets appear
+# under multiple genres (theguardian.com is food/culture/world/environment;
+# feeds.bbci.co.uk is news/business/sport; feeds.npr.org is news/health), so a
+# host-keyed map would silently collapse them to whichever section came last.
+# User-added feeds are absent here -> genre "" (no genre signal), which is fine.
+EXTERNAL_FEED_GENRE = {
+    # ── cooking ──
+    "https://www.bonappetit.com/feed/rss": "cooking",
+    "https://www.thekitchn.com/main.rss": "cooking",
+    "https://www.theguardian.com/food/rss": "cooking",
+    "https://rss.nytimes.com/services/xml/rss/nyt/DiningandWine.xml": "cooking",
+    # ── design ──
+    "https://www.yankodesign.com/feed/": "design",
+    "https://www.designweek.co.uk/feed/": "design",
+    "https://www.creativebloq.com/feed": "design",
+    "https://eyeondesign.aiga.org/feed/": "design",
+    "https://www.sightunseen.com/feed/": "design",
+    "https://www.printmag.com/feed/": "design",
+    "https://www.underconsideration.com/brandnew/atom.xml": "design",
+    # ── architecture ──
+    "https://www.archdaily.com/rss/": "architecture",
+    "https://www.architecturaldigest.com/feed/rss": "architecture",
+    "https://architizer.com/blog/feed/": "architecture",
+    "https://www.archpaper.com/feed/": "architecture",
+    # ── art ──
+    "https://hyperallergic.com/feed/": "art",
+    "https://news.artnet.com/feed": "art",
+    "https://www.artnews.com/feed/": "art",
+    "https://www.juxtapoz.com/feed/": "art",
+    "https://www.booooooom.com/feed/": "art",
+    "https://www.artforum.com/feed/": "art",
+    "https://aestheticamagazine.com/feed/": "art",
+    # ── tech ──
+    "https://www.wired.com/feed/rss": "technology",
+    "https://techcrunch.com/feed/": "technology",
+    "https://www.engadget.com/rss.xml": "technology",
+    "https://www.technologyreview.com/feed/": "technology",
+    "https://www.theregister.com/headlines.atom": "technology",
+    # ── culture ──
+    "https://www.theatlantic.com/feed/all/": "culture",
+    "https://aeon.co/feed.rss": "culture",
+    "https://www.theguardian.com/culture/rss": "culture",
+    "https://www.newyorker.com/feed/culture": "culture",
+    # ── science ──
+    "https://api.quantamagazine.org/feed/": "science",
+    "https://www.sciencedaily.com/rss/all.xml": "science",
+    "https://www.scientificamerican.com/platform/syndication/rss/": "science",
+    "https://www.sciencenews.org/feed": "science",
+    # ── games ──
+    "https://www.eurogamer.net/feed": "games",
+    "https://www.pcgamer.com/rss/": "games",
+    "https://kotaku.com/rss": "games",
+    # ── variety: world / business / health / sports / climate ──
+    "http://feeds.bbci.co.uk/news/rss.xml": "world",
+    "https://feeds.npr.org/1001/rss.xml": "world",
+    "https://www.theguardian.com/world/rss": "world",
+    "https://www.aljazeera.com/xml/rss/all.xml": "world",
+    "http://feeds.bbci.co.uk/news/business/rss.xml": "business",
+    "https://feeds.npr.org/1128/rss.xml": "health",
+    "http://feeds.bbci.co.uk/sport/rss.xml": "sports",
+    "https://grist.org/feed/": "climate",
+    "https://www.theguardian.com/environment/rss": "climate",
+}
+
+# FreshRSS FOLDER (GReader label) -> genre. The folder name is lowercased before
+# lookup. Misses fall through to the lowercased folder itself (so same-folder own
+# items still match each other); ``miscellaneous`` / blank -> "" (no genre).
+FOLDER_GENRE = {
+    "tech": "technology",
+    "google": "technology",
+    "android": "technology",
+    "moodboard": "design",
+    "design": "design",
+    "cooking": "cooking",
+    "games": "games",
+    "art": "art",
+    "culture": "culture",
+    "science": "science",
+}
+
+
+def genre_for_folder(folder):
+    """Normalize a FreshRSS folder name to a taxonomy genre, or "" for none.
+
+    Lowercases the folder, maps known folders to the taxonomy, treats
+    ``miscellaneous`` / blank as no-genre, and falls through to the lowercased
+    folder for anything unmapped (so same-folder own items still group)."""
+    f = (folder or "").strip().lower()
+    if not f or f == "miscellaneous":
+        return ""
+    return FOLDER_GENRE.get(f, f)
+
+
+def _folder_from_categories(categories):
+    """First FreshRSS folder label from a GReader item's ``categories`` list.
+
+    GReader items tag folders as ``user/-/label/<Folder>``; return the suffix of
+    the first such entry, or "" if none."""
+    if not isinstance(categories, list):
+        return ""
+    marker = "user/-/label/"
+    for c in categories:
+        if isinstance(c, str) and c.startswith(marker):
+            return c[len(marker):].strip()
+    return ""
+
 # ───────────────────────── text / tokenizing ──────────────────────
 
 # A compact English stopword list — enough to kill the common noise without a
@@ -162,6 +277,7 @@ W_PROPER = 4.0          # proper-noun phrases: strongest "same subject" signal
 SAME_SOURCE_PENALTY = 0.85   # light down-rank so OTHER outlets surface
 NEAR_DUP_TITLE_RATIO = 0.85  # >= this token-Jaccard on titles == same story
 EXTERNAL_BOOST = 1.5         # prioritize outside-subscription coverage in recommendations
+GENRE_BOOST = 1.4           # boost candidates in the SAME genre/topic as the query article
 MAX_PER_SOURCE_IN_RESULTS = 2  # at most N results from any single outlet (variety)
 
 
@@ -291,6 +407,8 @@ def parse_items(raw_json):
                 content_html = summary.get("content") or ""
             published = o.get("published")
             published_ms = int(published) * 1000 if isinstance(published, (int, float)) and published > 0 else None
+            # Genre from the FreshRSS folder (GReader ``user/-/label/<Folder>``).
+            genre = genre_for_folder(_folder_from_categories(o.get("categories")))
             out.append(
                 {
                     "id": (o.get("id") or "").strip() or None,
@@ -303,6 +421,7 @@ def parse_items(raw_json):
                     "author": (o.get("author") or "").strip() or None,
                     "text": strip_html(content_html)[:2000],
                     "contentHtml": content_html,
+                    "genre": genre,
                 }
             )
         except Exception:
@@ -415,10 +534,14 @@ def _media_image(entry):
     return None
 
 
-def parse_feed(xml_bytes, feed_url=""):
+def parse_feed(xml_bytes, feed_url="", genre=""):
     """Parse raw RSS 2.0 / Atom feed bytes into a list of article dicts matching
     ``parse_items``' shape. Pure: no network, never raises (returns [] on a
     malformed/empty document; skips individual bad entries).
+
+    ``genre`` (optional) stamps the source-genre on every parsed article (the
+    fetcher passes the feed's genre from ``EXTERNAL_FEED_GENRE``); defaults to ""
+    so direct/test callers get no genre signal.
 
     Handles RSS 2.0 (<item> with <title>/<link>/<description>/content:encoded/
     <pubDate>/media:content/<enclosure>) and Atom (<entry> with <title>/
@@ -511,6 +634,7 @@ def parse_feed(xml_bytes, feed_url=""):
                     "author": author,
                     "text": strip_html(content_html)[:2000],
                     "contentHtml": content_html,
+                    "genre": genre,
                 }
             )
         except Exception:
@@ -678,6 +802,7 @@ def related(index, link=None, item_id=None, k=8):
         qart = index["articles"][qi]
         q_link = qart.get("link")
         q_source = qart.get("source") or ""
+        q_genre = qart.get("genre") or ""
         q_title_tokens = index["title_tokens"][qi]
 
         scored = []
@@ -705,6 +830,13 @@ def related(index, link=None, item_id=None, k=8):
             # prioritize outside-subscription coverage
             if cand.get("external"):
                 adj *= EXTERNAL_BOOST
+            # SAME-GENRE signal: boost (never exclude) candidates whose genre
+            # matches the query's, so a cooking article surfaces cooking and an
+            # art article surfaces art. Cross-genre "false friends" (shared
+            # keywords like "paper") rank lower but can still appear.
+            cand_genre = cand.get("genre") or ""
+            if q_genre and cand_genre and q_genre == cand_genre:
+                adj *= GENRE_BOOST
 
             scored.append((adj, sim, i, cand_tt))
 
@@ -797,7 +929,8 @@ def fetch_feed(url, timeout=EXTERNAL_FETCH_TIMEOUT):
         req.add_header("Accept", "application/rss+xml, application/atom+xml, application/xml, text/xml, */*")
         with urllib.request.urlopen(req, timeout=timeout) as resp:
             raw = resp.read()  # raw bytes: let ET honor the declared charset
-        items = parse_feed(raw, feed_url=url)
+        # Stamp the source-genre from the curated map (user-added feeds -> "").
+        items = parse_feed(raw, feed_url=url, genre=EXTERNAL_FEED_GENRE.get(url, ""))
         # Newest first, then cap, so the corpus stays bounded.
         items.sort(key=lambda a: (a.get("publishedAt") or 0), reverse=True)
         return items[:EXTERNAL_PER_FEED]

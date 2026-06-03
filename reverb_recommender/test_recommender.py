@@ -23,6 +23,8 @@ from app import (
     article_by_link,
     resolve_external_feeds,
     merge_articles,
+    genre_for_folder,
+    EXTERNAL_FEED_GENRE,
 )
 
 
@@ -136,6 +138,131 @@ def test_external_feed_parsers():
         check(parse_feed(b"") == [], "empty feed bytes returns []")
     except Exception as e:
         check(False, f"malformed feed raised {e!r}")
+
+
+def test_genre_assignment():
+    """The folder->genre and url->genre maps assign the taxonomy correctly."""
+    print("Testing genre assignment (folder + external-feed maps)...")
+    # FreshRSS folder -> genre normalization
+    check(genre_for_folder("Tech") == "technology", "folder 'Tech' -> technology")
+    check(genre_for_folder("Android") == "technology", "folder 'Android' -> technology")
+    check(genre_for_folder("Moodboard") == "design", "folder 'Moodboard' -> design")
+    check(genre_for_folder("Cooking") == "cooking", "folder 'Cooking' -> cooking")
+    check(genre_for_folder("Miscellaneous") == "", "folder 'Miscellaneous' -> '' (no genre)")
+    check(genre_for_folder("") == "", "blank folder -> '' (no genre)")
+    check(genre_for_folder("Woodworking") == "woodworking",
+          "unmapped folder falls through to lowercased name (same-folder grouping)")
+
+    # parse_items derives genre from the GReader user/-/label/<Folder> category
+    folder_corpus = {
+        "items": [
+            {
+                "id": "g/art",
+                "title": "Gallery opens new sculpture wing",
+                "canonical": [{"href": "https://g.example.com/art"}],
+                "origin": {"htmlUrl": "https://g.example.com/", "title": "Gallery"},
+                "summary": {"content": "<p>An art museum unveils a sculpture wing.</p>"},
+                "categories": ["user/-/state/com.google/reading-list", "user/-/label/Art"],
+            },
+        ]
+    }
+    parsed = parse_items(json.dumps(folder_corpus))
+    check(parsed and parsed[0].get("genre") == "art",
+          "parse_items reads genre from user/-/label/Art category -> art")
+
+    # external-feed URL -> genre map (keyed by exact URL, host-sharing handled)
+    check(EXTERNAL_FEED_GENRE.get("https://www.theguardian.com/food/rss") == "cooking",
+          "Guardian Food URL -> cooking")
+    check(EXTERNAL_FEED_GENRE.get("https://www.theguardian.com/environment/rss") == "climate",
+          "Guardian Environment URL -> climate (same host, different genre)")
+    check(EXTERNAL_FEED_GENRE.get("http://feeds.bbci.co.uk/sport/rss.xml") == "sports",
+          "BBC Sport URL -> sports (host shared with BBC News/Business)")
+    check(EXTERNAL_FEED_GENRE.get("https://hyperallergic.com/feed/") == "art",
+          "Hyperallergic URL -> art")
+
+    # parse_feed stamps the passed genre on every article
+    arts = parse_feed(RSS_FIXTURE, feed_url="https://tech.example.com/feed.xml", genre="technology")
+    check(arts and all(a.get("genre") == "technology" for a in arts),
+          "parse_feed(genre=...) stamps the genre on every external article")
+    # default genre is "" so existing parser callers see no signal
+    arts0 = parse_feed(RSS_FIXTURE, feed_url="https://tech.example.com/feed.xml")
+    check(arts0 and all(a.get("genre") == "" for a in arts0),
+          "parse_feed default genre is '' (no signal for direct callers)")
+
+
+def test_genre_weighting():
+    """Two candidates with EXACTLY equal raw cosine to the query: the same-genre
+    one must rank above the cross-genre one, so genre is the ONLY differentiator.
+
+    Construction makes the cosines provably equal: both candidates share one body
+    (``shared_body``) and symmetric titles that differ only by a single unique
+    filler token ('alpha' vs 'beta'). Each filler is unique to its own doc (df=1
+    => identical IDF, identical norm contribution) and never appears in the query,
+    so it never enters the dot product => norm(A)==norm(B) and dot(A,q)==dot(B,q).
+    Title token-set Jaccard to the query is 3/5=0.6 and A-vs-B is 0.6, both below
+    the 0.85 near-dup threshold, so neither is dropped. Distinct sources avoid
+    SAME_SOURCE_PENALTY; built straight from parse_items (no merge) so neither
+    carries the external boost. The only separation left is GENRE_BOOST."""
+    print("Testing genre weighting in related()...")
+    # Same body for both candidates so their body contribution is identical.
+    shared_body = ("<p>The exhibition explores texture material surface light and "
+                   "color through layered paper and pigment across many panels.</p>")
+    corpus = {
+        "items": [
+            {
+                "id": "gw/query",
+                "title": "paper pigment layered showcase",
+                "canonical": [{"href": "https://q.example.com/show"}],
+                "origin": {"htmlUrl": "https://q.example.com/", "title": "Query Outlet"},
+                "summary": {"content": shared_body},
+                "categories": ["user/-/label/Art"],   # genre -> art
+            },
+            {
+                "id": "gw/same-genre",
+                "title": "paper pigment layered alpha",
+                "canonical": [{"href": "https://a.example.com/display"}],
+                "origin": {"htmlUrl": "https://a.example.com/", "title": "Art Outlet"},
+                "summary": {"content": shared_body},
+                "categories": ["user/-/label/Art"],   # genre -> art (MATCH)
+            },
+            {
+                "id": "gw/cross-genre",
+                "title": "paper pigment layered beta",
+                "canonical": [{"href": "https://t.example.com/exhibit"}],
+                "origin": {"htmlUrl": "https://t.example.com/", "title": "Tech Outlet"},
+                "summary": {"content": shared_body},
+                "categories": ["user/-/label/Tech"],   # genre -> technology (NO MATCH)
+            },
+        ]
+    }
+    articles = parse_items(json.dumps(corpus))
+    check(len(articles) == 3, "genre-weighting corpus parses to 3 articles")
+    by_link = {a["link"]: a for a in articles}
+    check(by_link["https://a.example.com/display"]["genre"] == "art",
+          "same-genre candidate is tagged art")
+    check(by_link["https://t.example.com/exhibit"]["genre"] == "technology",
+          "cross-genre candidate is tagged technology")
+
+    idx = build_index(articles)
+    res = related(idx, link="https://q.example.com/show", k=5)
+    rlinks = [r["link"] for r in res]
+    print(f"  returned {len(res)} items: {[r['title'][:45] for r in res]}")
+
+    same_link = "https://a.example.com/display"
+    cross_link = "https://t.example.com/exhibit"
+    check(same_link in rlinks and cross_link in rlinks,
+          "both same-genre and cross-genre candidates are returned (boost never excludes)")
+
+    def rank(link):
+        return rlinks.index(link) if link in rlinks else 10 ** 9
+
+    check(rank(same_link) < rank(cross_link),
+          "same-genre (art) candidate ranks ABOVE the cross-genre (tech) candidate")
+    # And the score reflects the GENRE_BOOST (same-genre scored higher).
+    by_res = {r["link"]: r for r in res}
+    if same_link in by_res and cross_link in by_res:
+        check(by_res[same_link]["score"] > by_res[cross_link]["score"],
+              "same-genre candidate's score is boosted above the cross-genre one")
 
 
 def test_resolve_and_merge():
@@ -379,6 +506,10 @@ def main():
     # ── external feed parsing (inline RSS + Atom fixtures) ──
     test_external_feed_parsers()
     test_resolve_and_merge()
+
+    # ── source-genre signal: assignment + same-genre weighting ──
+    test_genre_assignment()
+    test_genre_weighting()
 
     # ── an EXTERNAL article, mixed into a build_index corpus, is returned by related() ──
     print("Mixing external (parse_feed) articles into the corpus and querying related()...")
