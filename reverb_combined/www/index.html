@@ -1961,16 +1961,12 @@
             #featured-track {
                 display: flex;
                 flex-direction: row;
-                gap: 16px;
-                overflow-x: auto;
-                overflow-y: hidden;
+                gap: 0; /* gaps are per-card margins (JS) so collapsed cards add no space */
+                overflow: hidden;
                 width: auto;
                 height: auto;
                 position: static;
-                scroll-snap-type: x mandatory;
-                scroll-padding-left: 0;
                 padding: 4px 0 6px;
-                scrollbar-width: none;
             }
             #featured-track::-webkit-scrollbar { display: none; }
             .featured-card {
@@ -1990,7 +1986,9 @@
                 border-radius: 28px;
                 overflow: hidden;
                 box-shadow: 0 6px 22px rgba(0, 0, 0, 0.18);
-                transition: flex-basis 0.34s var(--spring);
+                transition:
+                    flex-basis 0.36s var(--spring),
+                    margin-left 0.36s var(--spring);
             }
             /* While the pane/window is actively resizing, snap widths instead of animating them. */
             #featured-track.resizing .featured-card { transition: none; }
@@ -5990,30 +5988,34 @@
                         applyFeaturedColor(rgb);
                     });
                 }
-                card.addEventListener("click", () =>
-                    showArticle(item, card, link, feed.title, fRgb, fDomain),
-                );
+                card.addEventListener("click", () => {
+                    if (_carouselSwiped) return;
+                    const track = document.getElementById("featured-track");
+                    const idx = track ? [...track.children].indexOf(card) : -1;
+                    // Tap a peek frame to focus it (it expands); tap the focused frame to open it.
+                    if (idx === -1 || idx === featuredIndex) {
+                        showArticle(item, card, link, feed.title, fRgb, fDomain);
+                    } else {
+                        featuredIndex = idx;
+                        _syncFeaturedFromScroll();
+                        startCarouselTimer();
+                    }
+                });
                 return card;
             }
 
             let _carouselTimer = null;
+            let _carouselSwiped = false;
 
             function startCarouselTimer() {
                 stopCarouselTimer();
                 _carouselTimer = setInterval(() => {
-                    const track = document.getElementById("featured-track");
-                    if (!track) {
+                    if (!document.getElementById("featured-track") || !featuredArticles.length) {
                         stopCarouselTimer();
                         return;
                     }
-                    featuredIndex =
-                        (featuredIndex + 1) % featuredArticles.length;
-                    track.classList.add("slow-advance");
-                    positionCarousel();
-                    setTimeout(
-                        () => track.classList.remove("slow-advance"),
-                        700,
-                    );
+                    featuredIndex = (featuredIndex + 1) % featuredArticles.length;
+                    _syncFeaturedFromScroll();
                 }, 12000);
             }
 
@@ -6051,20 +6053,31 @@
                     dotsEl.appendChild(dot);
                 });
 
-                // The most-centred card is the "featured" one; sync caption/backdrop/dots
-                // off the native scroll position (rAF-debounced).
-                let _ticking = false;
-                track.addEventListener("scroll", () => {
-                    if (_ticking) return;
-                    _ticking = true;
-                    requestAnimationFrame(() => {
-                        _ticking = false;
+                // Focus is driven by featuredIndex (tap a peek to focus it, swipe, dots, arrows, or
+                // the auto-advance timer); _syncFeaturedFromScroll reflows the frame sizes.
+                let _sx = null;
+                track.addEventListener("touchstart", (e) => {
+                    _sx = e.touches[0] ? e.touches[0].clientX : null;
+                    stopCarouselTimer();
+                }, { passive: true });
+                track.addEventListener("touchend", (e) => {
+                    const sx = _sx; _sx = null;
+                    startCarouselTimer();
+                    const t = e.changedTouches[0];
+                    if (sx == null || !t) return;
+                    const dx = t.clientX - sx;
+                    if (Math.abs(dx) > 40) {
+                        _carouselSwiped = true;
+                        setTimeout(() => { _carouselSwiped = false; }, 350);
+                        featuredIndex = Math.max(0, Math.min(
+                            featuredArticles.length - 1,
+                            featuredIndex + (dx < 0 ? 1 : -1),
+                        ));
                         _syncFeaturedFromScroll();
-                    });
+                    }
                 });
                 track.addEventListener("mouseenter", stopCarouselTimer);
                 track.addEventListener("mouseleave", startCarouselTimer);
-                track.addEventListener("touchstart", stopCarouselTimer, { passive: true });
 
                 requestAnimationFrame(() => {
                     _syncFeaturedFromScroll();
@@ -6076,51 +6089,40 @@
                 startCarouselTimer();
             }
 
-            // Find the card nearest the track centre; drive featuredIndex + caption/backdrop/dots.
+            // Lay the carousel out from featuredIndex (no native scroll). The focused frame sits at
+            // the left with nothing peeking to its left; a medium frame + corner slivers peek to the
+            // right and fill the feed width. Changing featuredIndex reflows the widths — the newly
+            // focused frame expands and the previous one contracts (flex-basis + margin transition).
+            // (Name kept for its existing callers — resize observer, dots, arrows, init.)
             function _syncFeaturedFromScroll() {
                 const track = document.getElementById("featured-track");
                 if (!track) return;
                 const cards = [...track.children];
                 if (!cards.length) return;
-                // Leftmost card in view = focused (left-anchored multi-browse; nothing left of it).
-                const padLeft = cards[0].offsetLeft;
-                const target = track.scrollLeft + padLeft;
-                let best = 0, bestDist = Infinity;
-                cards.forEach((c, i) => {
-                    const d = Math.abs(c.offsetLeft - target);
-                    if (d < bestDist) { bestDist = d; best = i; }
-                });
-                featuredIndex = best;
+                featuredIndex = Math.max(0, Math.min(featuredIndex, cards.length - 1));
 
-                // M3 hero keylines: ONE dominant focused frame + a medium peek + a corner sliver,
-                // sized to exactly fill the track — so the carousel spans the same width as the feed
-                // grid below (both use the same clamp() side inset). The focused frame is much wider
-                // than the rest (height grows only a little); as you scroll, the newly focused frame
-                // expands and the previous one contracts, animated by the flex-basis transition.
-                const cs = getComputedStyle(track);
-                const avail = track.clientWidth - (parseFloat(cs.paddingLeft) || 0) - (parseFloat(cs.paddingRight) || 0);
-                const gap = parseFloat(cs.columnGap || cs.gap) || 16;
-                const SMALL = 56;   // ≈ 2× the 28px corner radius — just the rounded corner shows
-                // Focused + medium share the width left after the trailing sliver + the two gaps.
-                const rem = Math.max(SMALL * 2, avail - SMALL - gap * 2);
-                const largeW = Math.min(Math.round(rem * 0.76), rem - 40);
-                const MEDIUM = rem - largeW;
-                // Wider, not much taller: a landscape focused frame, height clamped so it never balloons.
-                const cardH = Math.round(Math.min(340, Math.max(220, largeW * 0.56)));
+                const gap = 16;
+                const avail = track.clientWidth;     // track box == feed content width (inset is on the section)
+                const SMALL = 56;                    // corner sliver (≈ 2× the 28px radius)
+                // Focused width: 5/8 of the earlier dominant hero (0.76 → 0.475 of the row budget).
+                const L = Math.max(SMALL + 40, Math.round(0.475 * (avail - SMALL - gap * 2)));
+                const M = Math.max(SMALL + 4, Math.round(L * 0.62));
+                const cardH = Math.round(Math.min(320, Math.max(210, L * 0.62)));
                 cards.forEach((c, i) => {
-                    const off = i - best;
-                    const w = off <= 0 ? largeW : off === 1 ? MEDIUM : SMALL;
+                    const off = i - featuredIndex;
+                    const w = off < 0 ? 0 : off === 0 ? L : off === 1 ? M : SMALL;
                     c.style.flexBasis = w + "px";
+                    c.style.marginLeft = off >= 1 ? gap + "px" : "0px";
                     c.style.height = cardH + "px";
-                    c.classList.toggle("focused", i === best);
+                    c.classList.toggle("focused", i === featuredIndex);
                 });
 
-                const cur = featuredArticles[best];
-                const accent = cards[best] && cards[best].style.getPropertyValue("--item-accent") || "";
+                const cur = featuredArticles[featuredIndex];
+                const accent = (cards[featuredIndex] && cards[featuredIndex].style.getPropertyValue("--item-accent")) || "";
                 if (cur) setBackdropImage(getImage(cur.item));
                 document.querySelectorAll(".featured-dot").forEach((d, i) => {
-                    d.classList.toggle("active", i === best);
-                    d.style.background = i === best && accent ? accent : "";
+                    d.classList.toggle("active", i === featuredIndex);
+                    d.style.background = i === featuredIndex && accent ? accent : "";
                 });
                 const cap = document.getElementById("featured-caption");
                 if (cap && cur) {
@@ -6136,15 +6138,9 @@
                 track.appendChild(makeFeaturedCard(feed, item));
             }
 
-            // Scroll the carousel so featuredIndex becomes the leading (left) card; the
-            // scroll handler then syncs caption/backdrop/dots. (Native scroll-snap does the rest.)
+            // Re-lay-out the carousel for the current featuredIndex (focus changes reflow, no scroll).
             function positionCarousel() {
-                const track = document.getElementById("featured-track");
-                if (!track) return;
-                const card = track.children[featuredIndex];
-                if (!card) return;
-                const pad = track.children[0] ? track.children[0].offsetLeft : 0;
-                track.scrollTo({ left: card.offsetLeft - pad, behavior: "smooth" });
+                _syncFeaturedFromScroll();
             }
 
             // ── Feed-page cache (only read/written by populateFeedGrid) ──
