@@ -5845,7 +5845,7 @@
                     const matched = _serverFeatured
                         .map((s) => byLink.get(_normLink(s.link)))
                         .filter(Boolean)
-                        .slice(0, 8);
+                        .slice(0, 5);
                     if (matched.length >= 3) top8 = matched;
                 }
                 if (!top8) {
@@ -5859,7 +5859,7 @@
                             seenSources.add(c.feed.url);
                             return true;
                         })
-                        .slice(0, 8);
+                        .slice(0, 5);
                 }
 
                 const changed =
@@ -6102,17 +6102,21 @@
                 featuredIndex = Math.max(0, Math.min(featuredIndex, cards.length - 1));
 
                 const gap = 16;
-                const avail = track.clientWidth;     // track box == feed content width (inset is on the section)
-                const SMALL = 56;                    // corner sliver (≈ 2× the 28px radius)
-                // Focused width: 5/8 of the earlier dominant hero (0.76 → 0.475 of the row budget).
-                const L = Math.max(SMALL + 40, Math.round(0.475 * (avail - SMALL - gap * 2)));
-                const M = Math.max(SMALL + 4, Math.round(L * 0.62));
-                const cardH = Math.round(Math.min(320, Math.max(210, L * 0.62)));
+                const avail = track.clientWidth;     // track box == feed content width (inset on the section)
+                const n = cards.length;
+                // All cards fit at once. Size by DISTANCE from the focused card — cards stay in place,
+                // only their widths change — in just 3 tiers: large (focused) > medium (adjacent) >
+                // small (2+ away). Widths are proportional to those weights so the row always fills
+                // the carousel exactly, for any focused position.
+                const cardArea = Math.max(1, avail - gap * (n - 1));
+                const weightFor = (d) => (d === 0 ? 3 : d === 1 ? 2 : 1);
+                let totalW = 0;
+                cards.forEach((_, i) => { totalW += weightFor(Math.abs(i - featuredIndex)); });
+                const cardH = Math.round(Math.min(300, Math.max(190, avail * 0.3)));
                 cards.forEach((c, i) => {
-                    const off = i - featuredIndex;
-                    const w = off < 0 ? 0 : off === 0 ? L : off === 1 ? M : SMALL;
-                    c.style.flexBasis = w + "px";
-                    c.style.marginLeft = off >= 1 ? gap + "px" : "0px";
+                    const d = Math.abs(i - featuredIndex);
+                    c.style.flexBasis = Math.round((weightFor(d) / totalW) * cardArea) + "px";
+                    c.style.marginLeft = i === 0 ? "0px" : gap + "px";
                     c.style.height = cardH + "px";
                     c.classList.toggle("focused", i === featuredIndex);
                 });
