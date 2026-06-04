@@ -823,22 +823,23 @@
             }
             #home-fab {
                 pointer-events: auto;
-                width: 52px;
-                height: 52px;
+                width: 56px;
+                height: 56px;
                 border-radius: 18px;
                 border: none;
-                background: var(--active-bg);
-                color: var(--active-fg);
+                background: var(--accent);
+                color: #fff;
                 display: flex;
                 align-items: center;
                 justify-content: center;
                 cursor: pointer;
-                box-shadow: 0 3px 10px rgba(0, 0, 0, 0.22);
-                transition: box-shadow 0.18s, background 0.18s;
+                box-shadow: 0 4px 14px color-mix(in srgb, var(--accent) 45%, transparent);
+                transition: box-shadow 0.18s, transform 0.18s var(--spring), border-radius 0.2s var(--spring);
             }
-            #home-fab .material-symbols-rounded { font-size: 26px; }
-            #home-fab:hover { box-shadow: 0 5px 16px rgba(0, 0, 0, 0.28); }
-            #home-fab.open { background: var(--accent); color: #fff; }
+            body.dark #home-fab { color: #15151a; }
+            #home-fab .material-symbols-rounded { font-size: 28px; }
+            #home-fab:hover { box-shadow: 0 6px 20px color-mix(in srgb, var(--accent) 60%, transparent); }
+            #home-fab.open { border-radius: 28px; }
             #home-fab-panel {
                 pointer-events: auto;
                 position: absolute;
@@ -1496,6 +1497,15 @@
                 color: var(--text-muted);
                 flex-shrink: 0;
             }
+            .article-meta .article-author {
+                font-size: 13px;
+                font-weight: 600;
+                color: var(--item-accent, var(--accent));
+                white-space: nowrap;
+                overflow: hidden;
+                text-overflow: ellipsis;
+                min-width: 0;
+            }
 
             /* ── Masonry view ── */
             .article-grid.masonry-view {
@@ -1906,6 +1916,48 @@
             }
             @media (max-width: 799px) {
                 #featured-dots { bottom: -8px; }
+            }
+            /* ── Android-parity: image-only cards + caption below the carousel ── */
+            #featured-section { height: auto; }
+            #featured-overflow { height: 380px; }
+            .featured-card { border-radius: 28px; }
+            .featured-card .thumb-frame {
+                flex: 1 1 100%;
+                height: 100%;
+                border-radius: 28px;
+            }
+            .featured-card .thumb-frame .article-thumb,
+            .featured-card .thumb-frame .article-thumb-placeholder {
+                border-radius: 28px;
+            }
+            .featured-arrow { top: 190px; }
+            #featured-caption {
+                margin: 18px clamp(16px, 12%, 80px) 0;
+                position: relative;
+                z-index: 1;
+            }
+            #featured-caption .fc-source {
+                font-size: 14px;
+                font-weight: 700;
+                color: var(--accent);
+                margin-bottom: 3px;
+            }
+            #featured-caption .fc-title {
+                font-size: 24px;
+                font-weight: 800;
+                color: var(--text);
+                line-height: 1.2;
+                letter-spacing: -0.01em;
+                display: -webkit-box;
+                -webkit-line-clamp: 2;
+                -webkit-box-orient: vertical;
+                overflow: hidden;
+                min-height: 2.4em;
+            }
+            #featured-dots {
+                position: static;
+                bottom: auto;
+                margin: 16px auto 0;
             }
             #featured-prev {
                 left: calc(15% - 26px);
@@ -3790,6 +3842,13 @@
                 const fab = document.getElementById("home-fab");
                 const panel = document.getElementById("home-fab-panel");
                 if (!fab || !panel) return;
+                // Float from the top: move the wrap to the first child of #middle so its
+                // position:sticky sticks at the top-right from the start (not below the carousel).
+                const wrap = document.getElementById("home-fab-wrap");
+                const middle = document.getElementById("middle");
+                if (wrap && middle && wrap.parentElement === middle) {
+                    middle.insertBefore(wrap, middle.firstChild);
+                }
                 const close = () => {
                     panel.classList.remove("open");
                     fab.classList.remove("open");
@@ -5343,6 +5402,13 @@
                 const favUrl = domain
                     ? `https://www.google.com/s2/favicons?domain=${encodeURIComponent(domain)}&sz=64`
                     : "";
+                // On a single-source page (no source label) show the author instead, like the app.
+                const author = !showSource
+                    ? (item.getElementsByTagName("dc:creator")[0]?.textContent
+                        || item.querySelector("author > name")?.textContent
+                        || item.querySelector("author")?.textContent
+                        || item.querySelector("creator")?.textContent || "").trim()
+                    : "";
                 const el = document.createElement("div");
                 el.className = animate
                     ? "article-item"
@@ -5366,7 +5432,9 @@
                     }
                     <div class="article-info">
                         <div class="article-meta">
-                            ${showSource ? `${favUrl ? `<img class="article-fav" src="${favUrl}" alt="" loading="lazy" onerror="this.remove()">` : ""}<span class="article-source">${escapeHtml(feed.title)}</span><span class="article-meta-dot">·</span>` : ""}
+                            ${showSource
+                                ? `${favUrl ? `<img class="article-fav" src="${favUrl}" alt="" loading="lazy" onerror="this.remove()">` : ""}<span class="article-source">${escapeHtml(feed.title)}</span><span class="article-meta-dot">·</span>`
+                                : (author ? `<span class="article-author">${escapeHtml(author)}</span><span class="article-meta-dot">·</span>` : "")}
                             <span class="article-date">${formatDate(date)}</span>
                         </div>
                         <div class="article-title">${escapeHtml(title)}</div>
@@ -5726,6 +5794,8 @@
 
                 const card = document.createElement("div");
                 card.className = "featured-card";
+                // Image-only card (Android multi-browse style); the caption for the
+                // centered item lives BELOW the carousel (see #featured-caption).
                 card.innerHTML = `
                     <div class="thumb-frame">
                         ${
@@ -5733,12 +5803,6 @@
                                 ? `<img class="article-thumb" src="${image}" alt="" loading="lazy">`
                                 : `<div class="article-thumb-placeholder"></div>`
                         }
-                    </div>
-                    <div class="article-info">
-                        <div class="article-source">${escapeHtml(feed.title)}</div>
-                        <div class="article-title">${escapeHtml(title)}</div>
-                        <div class="article-date">${formatDate(date)}</div>
-                        <div class="article-excerpt">${escapeHtml(excerpt)}${excerpt.length >= 140 ? "…" : ""}</div>
                     </div>
                 `;
                 if (image) {
@@ -5821,6 +5885,7 @@
                         <div id="featured-track"></div>
                     </div>
                     <button class="featured-arrow" id="featured-next"><span class="material-symbols-rounded" style="font-size:28px">chevron_right</span></button>
+                    <div id="featured-caption"></div>
                     <div id="featured-dots"></div>
                 `;
 
@@ -6037,6 +6102,15 @@
                     d.style.background = i === featuredIndex && activeAccent
                         ? activeAccent : "";
                 });
+
+                // Single caption BELOW the carousel for the centered item (Android style).
+                const cap = document.getElementById("featured-caption");
+                const cur = featuredArticles[featuredIndex];
+                if (cap && cur) {
+                    cap.innerHTML =
+                        `<div class="fc-source"${activeAccent ? ` style="color:${activeAccent}"` : ""}>${escapeHtml(cur.feed.title)}</div>` +
+                        `<div class="fc-title">${escapeHtml(getText(cur.item, "title"))}</div>`;
+                }
             }
 
             // ── Feed-page cache (only read/written by populateFeedGrid) ──
