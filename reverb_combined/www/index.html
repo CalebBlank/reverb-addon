@@ -930,11 +930,14 @@
             #home-fab.open .fab-icon, #reader-fab.open .fab-icon { opacity: 0; pointer-events: none; }
             #home-fab.open .fab-body, #reader-fab.open .fab-body { opacity: 1; transition-delay: 0.08s; }
             /* Reader display FAB: floats over the article pane, shown only while an article is open. */
-            #reader-fab { right: 28px; bottom: 28px; display: none; }
+            #reader-fab { right: 28px; bottom: 28px; display: none; z-index: 60; }
             body.article-open #reader-fab { display: block; }
             /* The reader FAB replaces the old "Aa Display" dropdown entry point. */
             #rc-toggle { display: none !important; }
-            #reader-fab .fab-body { width: 300px; max-height: min(64vh, 520px); overflow-y: auto; }
+            /* Reader menu is wider/taller than the home one (many controls); the open width must
+               match the body width or the controls get clipped by the FAB's overflow:hidden. */
+            #reader-fab.open { width: 340px; }
+            #reader-fab .fab-body { width: 340px; max-height: min(74vh, 640px); overflow-y: auto; }
             /* Neutralize #rc-panel's dropdown styling once it's relocated inside the FAB body. */
             #reader-fab #rc-panel {
                 display: flex;
@@ -3979,7 +3982,7 @@
                 const close = () => { fab.classList.remove("open"); fab.style.height = ""; };
                 const open = () => {
                     fab.classList.add("open");
-                    if (body) fab.style.height = body.offsetHeight + "px";
+                    if (body) fab.style.height = Math.max(120, body.offsetHeight) + "px";
                 };
                 fab.addEventListener("click", (e) => {
                     e.stopPropagation();
@@ -5425,6 +5428,10 @@
                 const bg = document.getElementById("article-bg");
                 if (!bg) return;
                 document.body.classList.add("article-open");
+                // Reset the reader display FAB to its closed state for each newly opened article, so
+                // it can never get stuck "open" with a stale (e.g. zero) height that swallows taps.
+                const _rf = document.getElementById("reader-fab");
+                if (_rf) { _rf.classList.remove("open"); _rf.style.height = ""; }
                 articleBackdropTint = tintRgb || null;
                 if (!url) {
                     // No hero image: show a source-color wash only.
