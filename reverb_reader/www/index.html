@@ -811,15 +811,41 @@
             }
 
             /* ── Feed display FAB (Android-style floating button + popover) ── */
-            #home-fab-wrap {
-                position: sticky;
-                top: 16px;
-                z-index: 6;
+            /* Feed header row: title on the left, [refresh] [display FAB] on the right. */
+            .feed-header {
                 display: flex;
-                justify-content: flex-end;
-                padding: 0 clamp(16px, 12%, 80px);
-                height: 0; /* float over the feed; don't take vertical space */
-                pointer-events: none;
+                align-items: center;
+                justify-content: space-between;
+                gap: 12px;
+            }
+            .feed-header .section-title { min-width: 0; }
+            .feed-header-actions {
+                display: flex;
+                align-items: center;
+                gap: 10px;
+                flex-shrink: 0;
+                padding-right: clamp(16px, 12%, 80px);
+            }
+            .fh-icon-btn {
+                width: 48px;
+                height: 48px;
+                border-radius: 14px;
+                border: none;
+                background: var(--btn-bg);
+                color: var(--text-sub);
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                cursor: pointer;
+                flex-shrink: 0;
+                transition: color 0.15s, background 0.15s;
+            }
+            .fh-icon-btn:hover { color: var(--accent); }
+            .fh-icon-btn .material-symbols-rounded { font-size: 22px; }
+            #home-fab-wrap {
+                position: relative;
+                display: flex;
+                align-items: center;
             }
             #home-fab {
                 pointer-events: auto;
@@ -843,8 +869,8 @@
             #home-fab-panel {
                 pointer-events: auto;
                 position: absolute;
-                top: 62px;
-                right: clamp(16px, 12%, 80px);
+                top: 60px;
+                right: 0;
                 background: var(--bg-card);
                 border-radius: 20px;
                 box-shadow: 0 10px 30px rgba(0, 0, 0, 0.24);
@@ -1919,8 +1945,8 @@
             }
             /* ── Android-parity: image-only cards + caption below the carousel ── */
             #featured-section { height: auto; }
-            #featured-overflow { height: 380px; }
-            .featured-card { border-radius: 28px; }
+            #featured-overflow { height: 240px; }
+            .featured-card { width: 82%; border-radius: 28px; }
             .featured-card .thumb-frame {
                 flex: 1 1 100%;
                 height: 100%;
@@ -1930,7 +1956,7 @@
             .featured-card .thumb-frame .article-thumb-placeholder {
                 border-radius: 28px;
             }
-            .featured-arrow { top: 190px; }
+            .featured-arrow { top: 120px; }
             #featured-caption {
                 margin: 18px clamp(16px, 12%, 80px) 0;
                 position: relative;
@@ -3842,13 +3868,6 @@
                 const fab = document.getElementById("home-fab");
                 const panel = document.getElementById("home-fab-panel");
                 if (!fab || !panel) return;
-                // Float from the top: move the wrap to the first child of #middle so its
-                // position:sticky sticks at the top-right from the start (not below the carousel).
-                const wrap = document.getElementById("home-fab-wrap");
-                const middle = document.getElementById("middle");
-                if (wrap && middle && wrap.parentElement === middle) {
-                    middle.insertBefore(wrap, middle.firstChild);
-                }
                 const close = () => {
                     panel.classList.remove("open");
                     fab.classList.remove("open");
@@ -5353,21 +5372,25 @@
                 _lazyTeardown();
                 middle.innerHTML = `
                     <div id="featured-section"></div>
-                    <div class="section-title" id="all-feeds-title">All Feeds</div>
-                    <div id="home-fab-wrap">
-                        <button id="home-fab" title="Display options" aria-label="Display options"><span class="material-symbols-rounded">tune</span></button>
-                        <div id="home-fab-panel">
-                            <div class="hf-row">
-                                <span class="hf-label">View</span>
-                                <button id="view-toggle" title="Switch to list view"><span class="material-symbols-rounded">grid_view</span></button>
-                            </div>
-                            <div class="hf-row">
-                                <span class="hf-label">Size</span>
-                                <input id="card-size" type="range" min="0" max="3" value="0" step="1">
-                            </div>
-                            <div class="hf-row hf-row-btns">
-                                <button id="refresh-btn"><span class="refresh-icon material-symbols-rounded">refresh</span> Refresh</button>
-                                <button id="theme-toggle" title="Toggle dark mode"><span class="material-symbols-rounded">dark_mode</span></button>
+                    <div class="feed-header">
+                        <div class="section-title" id="all-feeds-title">All Feeds</div>
+                        <div class="feed-header-actions">
+                            <button id="refresh-btn" class="fh-icon-btn" title="Refresh"><span class="refresh-icon material-symbols-rounded">refresh</span></button>
+                            <div id="home-fab-wrap">
+                                <button id="home-fab" title="Display options" aria-label="Display options"><span class="material-symbols-rounded">tune</span></button>
+                                <div id="home-fab-panel">
+                                    <div class="hf-row">
+                                        <span class="hf-label">View</span>
+                                        <button id="view-toggle" title="Switch to list view"><span class="material-symbols-rounded">grid_view</span></button>
+                                    </div>
+                                    <div class="hf-row">
+                                        <span class="hf-label">Size</span>
+                                        <input id="card-size" type="range" min="0" max="3" value="0" step="1">
+                                    </div>
+                                    <div class="hf-row hf-row-btns">
+                                        <button id="theme-toggle" title="Toggle dark mode"><span class="material-symbols-rounded">dark_mode</span></button>
+                                    </div>
+                                </div>
                             </div>
                         </div>
                     </div>
@@ -6050,7 +6073,7 @@
                     const x = centerX + dist * (cardWidth + gap);
                     const scale = isNarrow
                         ? (dist === 0 ? 1 : 0.88)
-                        : (dist === 0 ? 1.25 : 1);
+                        : (dist === 0 ? 1 : 0.9);
 
                     if (jumped) {
                         card.style.transition = "none";
@@ -6315,21 +6338,25 @@
                 const middle = document.getElementById("middle");
 
                 middle.innerHTML = `
-                    <div class="section-title feed-page-title">${escapeHtml(feed.title)}</div>
-                    <div id="home-fab-wrap">
-                        <button id="home-fab" title="Display options" aria-label="Display options"><span class="material-symbols-rounded">tune</span></button>
-                        <div id="home-fab-panel">
-                            <div class="hf-row">
-                                <span class="hf-label">View</span>
-                                <button id="view-toggle" title="Switch to list view"><span class="material-symbols-rounded">grid_view</span></button>
-                            </div>
-                            <div class="hf-row">
-                                <span class="hf-label">Size</span>
-                                <input id="card-size" type="range" min="0" max="3" value="0" step="1">
-                            </div>
-                            <div class="hf-row hf-row-btns">
-                                <button id="refresh-btn"><span class="refresh-icon material-symbols-rounded">refresh</span> Refresh</button>
-                                <button id="theme-toggle" title="Toggle dark mode"><span class="material-symbols-rounded">dark_mode</span></button>
+                    <div class="feed-header">
+                        <div class="section-title feed-page-title">${escapeHtml(feed.title)}</div>
+                        <div class="feed-header-actions">
+                            <button id="refresh-btn" class="fh-icon-btn" title="Refresh"><span class="refresh-icon material-symbols-rounded">refresh</span></button>
+                            <div id="home-fab-wrap">
+                                <button id="home-fab" title="Display options" aria-label="Display options"><span class="material-symbols-rounded">tune</span></button>
+                                <div id="home-fab-panel">
+                                    <div class="hf-row">
+                                        <span class="hf-label">View</span>
+                                        <button id="view-toggle" title="Switch to list view"><span class="material-symbols-rounded">grid_view</span></button>
+                                    </div>
+                                    <div class="hf-row">
+                                        <span class="hf-label">Size</span>
+                                        <input id="card-size" type="range" min="0" max="3" value="0" step="1">
+                                    </div>
+                                    <div class="hf-row hf-row-btns">
+                                        <button id="theme-toggle" title="Toggle dark mode"><span class="material-symbols-rounded">dark_mode</span></button>
+                                    </div>
+                                </div>
                             </div>
                         </div>
                     </div>

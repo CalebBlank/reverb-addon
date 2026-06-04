@@ -1,5 +1,5 @@
 name: Reverb Reader
-version: "0.1.7"
+version: "0.1.8"
 slug: reverb_reader
 description: >-
   Reverb web RSS reader, served over Home Assistant Ingress and proxying the
