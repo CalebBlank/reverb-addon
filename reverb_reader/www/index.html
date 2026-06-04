@@ -624,7 +624,7 @@
                 left: 0;
             }
 
-            #home-link {
+            #home-link, #discover-link {
                 padding: 7px 12px 7px 16px;
                 cursor: pointer;
                 color: var(--text-sub);
@@ -642,21 +642,22 @@
                     border-color 0.15s,
                     color 0.15s;
             }
-            #home-link .sidebar-icon {
+            #home-link .sidebar-icon, #discover-link .sidebar-icon {
                 display: flex;
                 align-items: center;
                 flex-shrink: 0;
             }
-            #home-link .sidebar-icon .material-symbols-rounded {
+            #home-link .sidebar-icon .material-symbols-rounded,
+            #discover-link .sidebar-icon .material-symbols-rounded {
                 font-size: 18px;
                 margin-left: -2px;
             }
-            #home-link:hover {
+            #home-link:hover, #discover-link:hover {
                 background: var(--hover);
                 color: var(--text);
                 border-color: color-mix(in srgb, currentColor 50%, transparent);
             }
-            #home-link.active {
+            #home-link.active, #discover-link.active {
                 background: #ffffff;
                 border-color: rgba(0, 0, 0, 0.1);
                 color: #151515;
@@ -807,6 +808,226 @@
             #view-toggle:hover {
                 box-shadow: inset 0 0 0 1px var(--accent);
                 color: var(--accent);
+            }
+
+            /* ── Feed display FAB (Android-style floating button + popover) ── */
+            #home-fab-wrap {
+                position: sticky;
+                top: 16px;
+                z-index: 6;
+                display: flex;
+                justify-content: flex-end;
+                padding: 0 clamp(16px, 12%, 80px);
+                height: 0; /* float over the feed; don't take vertical space */
+                pointer-events: none;
+            }
+            #home-fab {
+                pointer-events: auto;
+                width: 52px;
+                height: 52px;
+                border-radius: 18px;
+                border: none;
+                background: var(--active-bg);
+                color: var(--active-fg);
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                cursor: pointer;
+                box-shadow: 0 3px 10px rgba(0, 0, 0, 0.22);
+                transition: box-shadow 0.18s, background 0.18s;
+            }
+            #home-fab .material-symbols-rounded { font-size: 26px; }
+            #home-fab:hover { box-shadow: 0 5px 16px rgba(0, 0, 0, 0.28); }
+            #home-fab.open { background: var(--accent); color: #fff; }
+            #home-fab-panel {
+                pointer-events: auto;
+                position: absolute;
+                top: 62px;
+                right: clamp(16px, 12%, 80px);
+                background: var(--bg-card);
+                border-radius: 20px;
+                box-shadow: 0 10px 30px rgba(0, 0, 0, 0.24);
+                border: 1px solid var(--border);
+                padding: 14px;
+                display: none;
+                flex-direction: column;
+                gap: 14px;
+                min-width: 240px;
+            }
+            #home-fab-panel.open {
+                display: flex;
+                animation: in-down 0.16s ease;
+            }
+            .hf-row {
+                display: flex;
+                align-items: center;
+                gap: 12px;
+            }
+            .hf-row .hf-label {
+                font-size: 12px;
+                font-weight: 700;
+                text-transform: uppercase;
+                letter-spacing: 0.5px;
+                color: var(--text-cat);
+                width: 42px;
+                flex-shrink: 0;
+            }
+            .hf-row #card-size {
+                flex: 1;
+                max-width: none;
+            }
+            .hf-row-btns {
+                justify-content: space-between;
+            }
+
+            /* ── Discover (Add sources) page ── */
+            #discover-bar {
+                position: relative;
+                display: flex;
+                align-items: center;
+                gap: 8px;
+                margin: 0 clamp(16px, 12%, 80px) 8px;
+                padding: 6px 6px 6px 16px;
+                background: var(--bg-thumb);
+                border-radius: 28px;
+            }
+            .dz-search-icon { color: var(--text-muted); font-size: 22px; }
+            #dz-search {
+                flex: 1;
+                border: none;
+                background: transparent;
+                outline: none;
+                font-size: 16px;
+                color: var(--text);
+                padding: 8px 4px;
+            }
+            #dz-search::placeholder { color: var(--text-muted); }
+            .dz-opml-btn {
+                border: none;
+                background: transparent;
+                color: var(--text-sub);
+                cursor: pointer;
+                border-radius: 50%;
+                width: 40px;
+                height: 40px;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                flex-shrink: 0;
+            }
+            .dz-opml-btn:hover { background: var(--hover); }
+            #dz-opml-menu {
+                position: absolute;
+                top: 52px;
+                right: 8px;
+                background: var(--bg-card);
+                border: 1px solid var(--border);
+                border-radius: 14px;
+                box-shadow: 0 8px 24px rgba(0, 0, 0, 0.2);
+                padding: 6px;
+                display: none;
+                z-index: 7;
+                min-width: 160px;
+            }
+            #dz-opml-menu.open { display: block; }
+            .dz-opml-item {
+                padding: 10px 14px;
+                border-radius: 9px;
+                cursor: pointer;
+                font-size: 14px;
+                color: var(--text);
+            }
+            .dz-opml-item:hover { background: var(--hover); }
+            #discover-body { padding: 4px clamp(16px, 12%, 80px) 40px; }
+            .dz-cat {
+                font-size: 17px;
+                font-weight: 700;
+                color: var(--text);
+                margin: 18px 0 10px;
+            }
+            .dz-row {
+                display: flex;
+                gap: 12px;
+                overflow-x: auto;
+                padding-bottom: 6px;
+                scrollbar-width: thin;
+            }
+            .dz-row.dz-wrap {
+                flex-wrap: wrap;
+                overflow-x: visible;
+            }
+            .dz-card {
+                flex: 0 0 150px;
+                width: 150px;
+                box-sizing: border-box;
+                background: var(--bg-card);
+                border: 1px solid var(--border);
+                border-radius: 20px;
+                padding: 16px 14px;
+                display: flex;
+                flex-direction: column;
+                align-items: center;
+                gap: 10px;
+                box-shadow: 0 1px 3px rgba(0, 0, 0, 0.06);
+            }
+            .dz-fav {
+                width: 48px;
+                height: 48px;
+                border-radius: 50%;
+                object-fit: cover;
+                background: #fff;
+            }
+            .dz-name {
+                font-size: 14px;
+                font-weight: 600;
+                color: var(--text);
+                text-align: center;
+                line-height: 1.3;
+                height: 36px;
+                overflow: hidden;
+                display: -webkit-box;
+                -webkit-line-clamp: 2;
+                -webkit-box-orient: vertical;
+            }
+            .dz-add {
+                width: 100%;
+                border: none;
+                border-radius: 999px;
+                padding: 8px 0;
+                font-size: 14px;
+                font-weight: 600;
+                cursor: pointer;
+                background: var(--active-bg);
+                color: var(--active-fg);
+                transition: background 0.15s, color 0.15s;
+            }
+            .dz-add:hover { background: var(--accent); color: #fff; }
+            .dz-add.added {
+                background: transparent;
+                color: var(--accent);
+                cursor: default;
+            }
+            .dz-add:disabled { opacity: 0.7; cursor: default; }
+            .dz-addurl {
+                background: var(--bg-card);
+                border: 1px solid var(--border);
+                border-radius: 18px;
+                padding: 18px;
+                max-width: 480px;
+            }
+            .dz-addurl-title { font-size: 16px; font-weight: 700; color: var(--text); }
+            .dz-addurl-url {
+                font-size: 13px;
+                color: var(--text-sub);
+                margin: 6px 0 14px;
+                word-break: break-all;
+            }
+            .dz-addurl .dz-add { max-width: 200px; }
+            .dz-empty {
+                padding: 40px 16px;
+                text-align: center;
+                color: var(--text-sub);
+                font-size: 15px;
             }
 
             /* ── Feed list ── */
@@ -1240,6 +1461,41 @@
                 text-transform: uppercase;
                 letter-spacing: 0.4px;
             }
+            /* Android-parity card meta row: favicon + source · date, above the title. */
+            .article-meta {
+                display: flex;
+                align-items: center;
+                gap: 6px;
+                min-width: 0;
+            }
+            .article-fav {
+                width: 18px;
+                height: 18px;
+                border-radius: 50%;
+                flex-shrink: 0;
+                object-fit: cover;
+                background: var(--bg-thumb);
+            }
+            .article-meta .article-source {
+                font-size: 13px;
+                font-weight: 600;
+                text-transform: none;
+                letter-spacing: 0;
+                color: var(--text);
+                white-space: nowrap;
+                overflow: hidden;
+                text-overflow: ellipsis;
+                min-width: 0;
+            }
+            .article-meta .article-meta-dot {
+                color: var(--text-muted);
+                flex-shrink: 0;
+            }
+            .article-meta .article-date {
+                font-size: 13px;
+                color: var(--text-muted);
+                flex-shrink: 0;
+            }
 
             /* ── Masonry view ── */
             .article-grid.masonry-view {
@@ -1297,28 +1553,29 @@
                 aspect-ratio: unset;
                 border-radius: 4px 0 0 4px;
             }
+            /* List view = Android ArticleListRow: thumbnail + stacked title over the meta row. */
             .article-grid.list-view .article-info {
-                flex-direction: row;
-                align-items: center;
-                gap: 16px;
+                flex-direction: column;
+                align-items: flex-start;
+                justify-content: center;
+                gap: 3px;
                 padding: 10px 16px;
             }
-            .article-grid.list-view .article-source {
-                flex-shrink: 0;
-            }
             .article-grid.list-view .article-title {
-                flex: 1;
-                font-size: 14px;
-                display: block;
-                white-space: nowrap;
+                order: 1;
+                flex: none;
+                font-size: 15px;
+                line-height: 1.35;
+                display: -webkit-box;
+                -webkit-line-clamp: 2;
+                -webkit-box-orient: vertical;
                 overflow: hidden;
-                text-overflow: ellipsis;
+            }
+            .article-grid.list-view .article-meta {
+                order: 2;
             }
             .article-grid.list-view .article-excerpt {
                 display: none;
-            }
-            .article-grid.list-view .article-date {
-                flex-shrink: 0;
             }
 
             /* ── Homepage ── */
@@ -1339,7 +1596,7 @@
             /* ── Featured carousel ── */
             #featured-section {
                 position: relative;
-                height: 360px;
+                height: 440px;
                 flex-shrink: 0;
                 padding: 24px 0;
                 margin-top: 80px;
@@ -1444,9 +1701,9 @@
                 position: absolute;
                 top: 4px;
                 bottom: 4px;
-                width: 56%;
+                width: 60%;
                 cursor: pointer;
-                border-radius: 20px;
+                border-radius: 28px;
                 border: 1px solid var(--border);
                 overflow: hidden;
                 display: flex;
@@ -1621,7 +1878,7 @@
             }
             @media (max-width: 799px) {
                 .featured-arrow { display: none; }
-                #featured-section { height: 450px; }
+                #featured-section { height: 520px; }
             }
             #featured-dots {
                 position: absolute;
@@ -2620,6 +2877,9 @@
                 <div id="home-link" tabindex="0" role="button">
                     <span class="sidebar-icon"><span class="material-symbols-rounded">home</span></span><span class="sidebar-text"> Home</span>
                 </div>
+                <div id="discover-link" tabindex="0" role="button">
+                    <span class="sidebar-icon"><span class="material-symbols-rounded">explore</span></span><span class="sidebar-text"> Discover</span>
+                </div>
             </div>
             <button id="add-feed-btn">
                 <span class="sidebar-icon"><span class="material-symbols-rounded">add</span></span><span class="sidebar-text"> Add feed</span>
@@ -3096,6 +3356,34 @@
                     });
                     return res.ok;
                 },
+                async subscribe(url) {
+                    const c = this.cfg();
+                    const tRes = await fetch(c.base + "/reader/api/0/token", {
+                        headers: this.authHeaders(),
+                    });
+                    const writeToken = (await tRes.text()).trim();
+                    const body =
+                        "quickadd=" + encodeURIComponent(url) +
+                        "&T=" + encodeURIComponent(writeToken);
+                    const res = await fetch(
+                        c.base + "/reader/api/0/subscription/quickadd",
+                        {
+                            method: "POST",
+                            headers: Object.assign(
+                                { "Content-Type": "application/x-www-form-urlencoded" },
+                                this.authHeaders(),
+                            ),
+                            body,
+                        },
+                    );
+                    if (!res.ok) return false;
+                    try {
+                        const j = await res.json();
+                        return !!(j && (j.streamId || j.numResults));
+                    } catch {
+                        return true;
+                    }
+                },
             };
 
             // Replace FEEDS in place with the server's subscriptions (grouped by
@@ -3492,6 +3780,27 @@
                     btn.innerHTML = themeIcon(dark);
                     localStorage.setItem("theme", dark ? "dark" : "light");
                     setTimeout(() => document.body.classList.remove("theme-fade"), 400);
+                });
+            }
+
+            // Feed "display" FAB: a floating button that opens the view/size/refresh/theme
+            // controls in a popover (Android-style). The control IDs inside are unchanged, so
+            // mountViewToggle/mountCardSlider/mountThemeToggle/mountRefreshButton still bind.
+            function mountHomeFab() {
+                const fab = document.getElementById("home-fab");
+                const panel = document.getElementById("home-fab-panel");
+                if (!fab || !panel) return;
+                const close = () => {
+                    panel.classList.remove("open");
+                    fab.classList.remove("open");
+                };
+                fab.addEventListener("click", (e) => {
+                    e.stopPropagation();
+                    panel.classList.toggle("open");
+                    fab.classList.toggle("open");
+                });
+                document.addEventListener("click", (e) => {
+                    if (!panel.contains(e.target) && !fab.contains(e.target)) close();
                 });
             }
 
@@ -3950,6 +4259,214 @@
                         .classList.add("active");
                     loadHomepage();
                 });
+
+            // ── Discover (Add sources) page ──
+            document
+                .getElementById("discover-link")
+                .addEventListener("click", () => {
+                    document
+                        .querySelectorAll(".feed-item")
+                        .forEach((el) => el.classList.remove("active"));
+                    document.getElementById("home-link").classList.remove("active");
+                    document.getElementById("discover-link").classList.add("active");
+                    loadDiscover();
+                });
+
+            let _discoverCatalog = null;
+
+            function discoverNormUrl(u) {
+                return (u || "").trim().toLowerCase()
+                    .replace(/^https?:\/\//, "").replace(/^www\./, "").replace(/\/+$/, "");
+            }
+            function discoverLooksLikeUrl(q) {
+                const t = (q || "").trim();
+                if (!t || /\s/.test(t)) return false;
+                if (/^https?:\/\//i.test(t)) return true;
+                return /^[\w-]+(\.[\w-]+)+(\/.*)?$/.test(t);
+            }
+            function discoverIsSubscribed(feedUrl) {
+                const n = discoverNormUrl(feedUrl);
+                return Object.keys(feedStreamIds).some((u) => discoverNormUrl(u) === n);
+            }
+
+            async function loadDiscover() {
+                clearArticleBackdrop();
+                document.body.style.setProperty("--article-accent", "#ffffff");
+                const middle = document.getElementById("middle");
+                _lazyTeardown();
+                middle.innerHTML = `
+                    <div class="section-title feed-page-title">Discover</div>
+                    <div id="discover-bar">
+                        <span class="material-symbols-rounded dz-search-icon">search</span>
+                        <input id="dz-search" type="text" placeholder="Add source or feed URL" autocomplete="off">
+                        <button id="dz-opml" class="dz-opml-btn" title="OPML" aria-label="OPML"><span class="material-symbols-rounded">more_vert</span></button>
+                        <div id="dz-opml-menu">
+                            <div class="dz-opml-item" id="dz-import">Import OPML</div>
+                            <div class="dz-opml-item" id="dz-export">Export OPML</div>
+                        </div>
+                        <input id="dz-file" type="file" accept=".opml,.xml,application/xml,text/xml" style="display:none">
+                    </div>
+                    <div id="discover-body"></div>
+                `;
+                mountDiscoverOpml();
+                const search = document.getElementById("dz-search");
+                search.addEventListener("input", () => renderDiscoverBody(search.value));
+                const body = document.getElementById("discover-body");
+                if (!GReader.isConnected()) {
+                    body.innerHTML = `<div class="dz-empty">Connect your feeds first (sidebar → Add feed → Sync) to discover sources.</div>`;
+                    return;
+                }
+                if (!_discoverCatalog) {
+                    body.innerHTML = `<div class="dz-empty">Loading sources…</div>`;
+                    try {
+                        const res = await fetch("recs/catalog", { headers: { Accept: "application/json" } });
+                        _discoverCatalog = res.ok ? ((await res.json()).categories || []) : [];
+                    } catch { _discoverCatalog = []; }
+                }
+                renderDiscoverBody("");
+            }
+
+            function makeDiscoverCard(src) {
+                const card = document.createElement("div");
+                card.className = "dz-card";
+                const subbed = discoverIsSubscribed(src.feedUrl);
+                const fav = `https://www.google.com/s2/favicons?domain=${encodeURIComponent(src.host || "")}&sz=64`;
+                card.innerHTML = `
+                    <img class="dz-fav" src="${fav}" alt="" loading="lazy" onerror="this.style.visibility='hidden'">
+                    <div class="dz-name">${escapeHtml(src.name)}</div>
+                    <button class="dz-add${subbed ? " added" : ""}">${subbed ? "✓ Added" : "+ Add"}</button>
+                `;
+                const btn = card.querySelector(".dz-add");
+                if (!subbed) {
+                    btn.addEventListener("click", async (e) => {
+                        e.stopPropagation();
+                        btn.disabled = true;
+                        btn.textContent = "Adding…";
+                        const ok = await GReader.subscribe(src.feedUrl);
+                        if (ok) {
+                            btn.classList.add("added");
+                            btn.textContent = "✓ Added";
+                            try { await grSyncSubscriptions(); } catch {}
+                        } else {
+                            btn.disabled = false;
+                            btn.textContent = "+ Add";
+                        }
+                    });
+                }
+                return card;
+            }
+
+            function renderDiscoverBody(query) {
+                const body = document.getElementById("discover-body");
+                if (!body) return;
+                const q = (query || "").trim();
+                if (discoverLooksLikeUrl(q)) {
+                    const url = /^https?:\/\//i.test(q) ? q : "https://" + q;
+                    body.innerHTML = `
+                        <div class="dz-addurl">
+                            <div class="dz-addurl-title">Add this source</div>
+                            <div class="dz-addurl-url">${escapeHtml(url)}</div>
+                            <button class="dz-add" id="dz-addurl-btn">+ Subscribe</button>
+                        </div>`;
+                    const b = document.getElementById("dz-addurl-btn");
+                    b.addEventListener("click", async () => {
+                        b.disabled = true;
+                        b.textContent = "Adding…";
+                        const ok = await GReader.subscribe(url);
+                        if (ok) {
+                            try { await grSyncSubscriptions(); } catch {}
+                            document.getElementById("dz-search").value = "";
+                            renderDiscoverBody("");
+                        } else {
+                            b.disabled = false;
+                            b.textContent = "+ Subscribe";
+                        }
+                    });
+                    return;
+                }
+                const cats = _discoverCatalog || [];
+                if (!cats.length) {
+                    body.innerHTML = `<div class="dz-empty">Couldn't load the source catalog. Make sure the Reverb Recommender add-on is updated (v0.1.9+).</div>`;
+                    return;
+                }
+                body.innerHTML = "";
+                if (q) {
+                    const ql = q.toLowerCase();
+                    const seen = new Set();
+                    const uniq = [];
+                    cats.flatMap((c) => c.sources)
+                        .filter((s) => s.name.toLowerCase().includes(ql) || (s.host || "").includes(ql) || (s.genre || "").includes(ql))
+                        .forEach((s) => { if (!seen.has(s.feedUrl)) { seen.add(s.feedUrl); uniq.push(s); } });
+                    if (!uniq.length) {
+                        body.innerHTML = `<div class="dz-empty">No sources match “${escapeHtml(q)}”. Paste a full feed URL to add it directly.</div>`;
+                        return;
+                    }
+                    const grid = document.createElement("div");
+                    grid.className = "dz-row dz-wrap";
+                    uniq.forEach((s) => grid.appendChild(makeDiscoverCard(s)));
+                    body.appendChild(grid);
+                    return;
+                }
+                cats.forEach((cat) => {
+                    const h = document.createElement("div");
+                    h.className = "dz-cat";
+                    h.textContent = cat.label;
+                    body.appendChild(h);
+                    const row = document.createElement("div");
+                    row.className = "dz-row";
+                    cat.sources.forEach((s) => row.appendChild(makeDiscoverCard(s)));
+                    body.appendChild(row);
+                });
+            }
+
+            function mountDiscoverOpml() {
+                const btn = document.getElementById("dz-opml");
+                const menu = document.getElementById("dz-opml-menu");
+                const file = document.getElementById("dz-file");
+                if (!btn || !menu) return;
+                btn.addEventListener("click", (e) => { e.stopPropagation(); menu.classList.toggle("open"); });
+                document.addEventListener("click", () => menu.classList.remove("open"));
+                document.getElementById("dz-export").addEventListener("click", () => {
+                    menu.classList.remove("open");
+                    const blob = new Blob([buildOpml()], { type: "text/xml" });
+                    const a = document.createElement("a");
+                    a.href = URL.createObjectURL(blob);
+                    a.download = "reverb-subscriptions.opml";
+                    a.click();
+                    URL.revokeObjectURL(a.href);
+                });
+                document.getElementById("dz-import").addEventListener("click", () => { menu.classList.remove("open"); file.click(); });
+                file.addEventListener("change", async () => {
+                    const f = file.files && file.files[0];
+                    if (!f) return;
+                    const text = await f.text();
+                    const uniq = [...new Set(
+                        [...text.matchAll(/xmlUrl\s*=\s*["']([^"']+)["']/gi)].map((m) => m[1].trim()).filter(Boolean),
+                    )];
+                    if (!uniq.length) { alert("No feeds found in that OPML."); return; }
+                    let added = 0;
+                    for (const u of uniq) { if (await GReader.subscribe(u)) added++; }
+                    try { await grSyncSubscriptions(); } catch {}
+                    alert(`Imported ${added} of ${uniq.length} feeds.`);
+                    const s = document.getElementById("dz-search");
+                    if (s) renderDiscoverBody(s.value || "");
+                    file.value = "";
+                });
+            }
+
+            function buildOpml() {
+                const esc = (s) => (s || "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+                let sb = '<?xml version="1.0" encoding="UTF-8"?>\n<opml version="2.0">\n  <head>\n    <title>Reverb subscriptions</title>\n  </head>\n  <body>\n';
+                FEEDS.forEach((cat) => {
+                    sb += `    <outline text="${esc(cat.category)}" title="${esc(cat.category)}">\n`;
+                    (cat.items || []).forEach((f) => {
+                        sb += `      <outline type="rss" text="${esc(f.title)}" title="${esc(f.title)}" xmlUrl="${esc(f.url)}"/>\n`;
+                    });
+                    sb += "    </outline>\n";
+                });
+                sb += "  </body>\n</opml>\n";
+                return sb;
+            }
 
             // ── Favicon colour extraction ──
             async function getDominantColor(domain) {
@@ -4778,12 +5295,22 @@
                 middle.innerHTML = `
                     <div id="featured-section"></div>
                     <div class="section-title" id="all-feeds-title">All Feeds</div>
-                    <div id="middle-toolbar">
-                        <button id="refresh-btn"><span class="refresh-icon material-symbols-rounded">refresh</span> Refresh</button>
-
-                        <input id="card-size" type="range" min="0" max="3" value="0" step="1">
-                        <button id="view-toggle" title="Switch to list view"><span class="material-symbols-rounded">grid_view</span></button>
-                        <button id="theme-toggle" title="Toggle dark mode"><span class="material-symbols-rounded">dark_mode</span></button>
+                    <div id="home-fab-wrap">
+                        <button id="home-fab" title="Display options" aria-label="Display options"><span class="material-symbols-rounded">tune</span></button>
+                        <div id="home-fab-panel">
+                            <div class="hf-row">
+                                <span class="hf-label">View</span>
+                                <button id="view-toggle" title="Switch to list view"><span class="material-symbols-rounded">grid_view</span></button>
+                            </div>
+                            <div class="hf-row">
+                                <span class="hf-label">Size</span>
+                                <input id="card-size" type="range" min="0" max="3" value="0" step="1">
+                            </div>
+                            <div class="hf-row hf-row-btns">
+                                <button id="refresh-btn"><span class="refresh-icon material-symbols-rounded">refresh</span> Refresh</button>
+                                <button id="theme-toggle" title="Toggle dark mode"><span class="material-symbols-rounded">dark_mode</span></button>
+                            </div>
+                        </div>
                     </div>
                     <div id="all-feeds-grid" class="article-grid"></div>
                 `;
@@ -4797,6 +5324,7 @@
                 mountCardSlider();
                 mountViewToggle();
                 mountThemeToggle();
+                mountHomeFab();
                 resetFeatured();
                 loadAllFeeds();
             }
@@ -4812,6 +5340,9 @@
                 const ts = new Date(date).getTime() || 0;
                 const domain = feed.url ? feedDomain(feed) : null;
                 let rgb = domain ? domainColorCache[domain] : null;
+                const favUrl = domain
+                    ? `https://www.google.com/s2/favicons?domain=${encodeURIComponent(domain)}&sz=64`
+                    : "";
                 const el = document.createElement("div");
                 el.className = animate
                     ? "article-item"
@@ -4834,9 +5365,11 @@
                             : `<div class="article-thumb-placeholder"></div>`
                     }
                     <div class="article-info">
-                        ${showSource ? `<div class="article-source"${rgb ? ` style="color:rgb(${rgb})"` : ""}>${escapeHtml(feed.title)}</div>` : ""}
+                        <div class="article-meta">
+                            ${showSource ? `${favUrl ? `<img class="article-fav" src="${favUrl}" alt="" loading="lazy" onerror="this.remove()">` : ""}<span class="article-source">${escapeHtml(feed.title)}</span><span class="article-meta-dot">·</span>` : ""}
+                            <span class="article-date">${formatDate(date)}</span>
+                        </div>
                         <div class="article-title">${escapeHtml(title)}</div>
-                        <div class="article-date">${formatDate(date)}</div>
                         <div class="article-excerpt">${escapeHtml(excerpt)}${excerpt.length >= 82 ? "…" : ""}</div>
                     </div>
                 `;
@@ -4853,10 +5386,6 @@
                             "--item-accent",
                             `rgb(${resolved})`,
                         );
-                        if (showSource) {
-                            const src = el.querySelector(".article-source");
-                            if (src) src.style.color = `rgb(${resolved})`;
-                        }
                     });
                 }
                 el.addEventListener("click", () => {
@@ -5713,12 +6242,22 @@
 
                 middle.innerHTML = `
                     <div class="section-title feed-page-title">${escapeHtml(feed.title)}</div>
-                    <div id="middle-toolbar">
-                        <button id="refresh-btn"><span class="refresh-icon material-symbols-rounded">refresh</span> Refresh</button>
-
-                        <input id="card-size" type="range" min="0" max="3" value="0" step="1">
-                        <button id="view-toggle" title="Switch to list view"><span class="material-symbols-rounded">grid_view</span></button>
-                        <button id="theme-toggle" title="Toggle dark mode"><span class="material-symbols-rounded">dark_mode</span></button>
+                    <div id="home-fab-wrap">
+                        <button id="home-fab" title="Display options" aria-label="Display options"><span class="material-symbols-rounded">tune</span></button>
+                        <div id="home-fab-panel">
+                            <div class="hf-row">
+                                <span class="hf-label">View</span>
+                                <button id="view-toggle" title="Switch to list view"><span class="material-symbols-rounded">grid_view</span></button>
+                            </div>
+                            <div class="hf-row">
+                                <span class="hf-label">Size</span>
+                                <input id="card-size" type="range" min="0" max="3" value="0" step="1">
+                            </div>
+                            <div class="hf-row hf-row-btns">
+                                <button id="refresh-btn"><span class="refresh-icon material-symbols-rounded">refresh</span> Refresh</button>
+                                <button id="theme-toggle" title="Toggle dark mode"><span class="material-symbols-rounded">dark_mode</span></button>
+                            </div>
+                        </div>
                     </div>
                     <div id="feed-grid" class="article-grid"></div>
                 `;
@@ -5726,6 +6265,7 @@
                 mountCardSlider();
                 mountViewToggle();
                 mountThemeToggle();
+                mountHomeFab();
 
                 await populateFeedGrid(feed);
             }
