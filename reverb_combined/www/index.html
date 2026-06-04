@@ -269,6 +269,7 @@
             }
 
             #right {
+                position: relative; /* containing block for the floating reader FAB */
                 width: 630px;
                 min-width: 0;
                 flex-shrink: 0;
@@ -928,6 +929,25 @@
             }
             #home-fab.open .fab-icon, #reader-fab.open .fab-icon { opacity: 0; pointer-events: none; }
             #home-fab.open .fab-body, #reader-fab.open .fab-body { opacity: 1; transition-delay: 0.08s; }
+            /* Reader display FAB: floats over the article pane, shown only while an article is open. */
+            #reader-fab { right: 28px; bottom: 28px; display: none; }
+            body.article-open #reader-fab { display: block; }
+            /* The reader FAB replaces the old "Aa Display" dropdown entry point. */
+            #rc-toggle { display: none !important; }
+            #reader-fab .fab-body { width: 300px; max-height: min(64vh, 520px); overflow-y: auto; }
+            /* Neutralize #rc-panel's dropdown styling once it's relocated inside the FAB body. */
+            #reader-fab #rc-panel {
+                display: flex;
+                position: static;
+                top: auto;
+                left: auto;
+                min-width: 0;
+                border: none;
+                box-shadow: none;
+                background: transparent;
+                padding: 0;
+                z-index: auto;
+            }
             .hf-row {
                 display: flex;
                 align-items: center;
@@ -3133,6 +3153,10 @@
         <div id="right">
             <div class="handle" id="handle-right"></div>
             <div class="handle" id="handle-right-split"></div>
+            <div id="reader-fab" role="button" tabindex="0" title="Display settings" aria-label="Display settings">
+                <span class="fab-icon"><span class="material-symbols-rounded">format_size</span></span>
+                <div class="fab-body"></div>
+            </div>
             <div id="right-scroll">
                 <div id="right-controls">
                     <button id="narrow-back-btn">
@@ -3965,6 +3989,22 @@
                     if (fab.classList.contains("open") && !fab.contains(e.target)) close();
                 });
             }
+
+            // Reader display FAB: move the existing #rc-panel (reading controls) into the FAB's morph
+            // body — reusing every control id + applyReadingPrefs binding — then wire the morph. The
+            // old hidden #reading-controls / #rc-toggle stay in the DOM so their listeners don't break.
+            function mountReaderFab() {
+                const fab = document.getElementById("reader-fab");
+                const panel = document.getElementById("rc-panel");
+                if (!fab || !panel) return;
+                const body = fab.querySelector(".fab-body");
+                if (body && panel.parentElement !== body) {
+                    panel.classList.add("open"); // neutralized to static display inside the FAB
+                    body.appendChild(panel);
+                }
+                mountMorphFab(fab);
+            }
+            mountReaderFab();
 
             // ── Mobile drawer (< 700px) ──
             function openDrawer() {
