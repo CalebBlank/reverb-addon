@@ -1977,12 +1977,12 @@
                 bottom: auto;
                 transform: none !important;
                 opacity: 1 !important;
-                /* M3 multi-browse: the focused card is wide ("lead"); the rest are a narrower
-                   frame, so the next item steps down in width to the right. JS toggles .lead. */
-                flex: 0 0 46%;
-                height: auto;
+                /* M3 multi-browse: JS (_syncFeaturedFromScroll) sets each card's flex-basis to a
+                   keyline width — large frame(s), one medium, then a corner-width sliver. All frames
+                   share one height; only the width steps down to the right. */
+                flex: 0 0 320px;
+                height: clamp(240px, 26vw, 500px);
                 max-height: 500px;
-                aspect-ratio: 16 / 10;
                 scroll-snap-align: start;
                 border: none;
                 border-radius: 28px;
@@ -1990,7 +1990,6 @@
                 box-shadow: 0 6px 22px rgba(0, 0, 0, 0.18);
                 transition: flex-basis 0.34s var(--spring);
             }
-            .featured-card.lead { flex-basis: 76%; }
             .featured-card .thumb-frame {
                 flex: 1 1 100%;
                 width: 100%;
@@ -6026,8 +6025,7 @@
                 if (!track) return;
                 const cards = [...track.children];
                 if (!cards.length) return;
-                // Leftmost card in view = the focused/lead one (left-anchored multi-browse, so
-                // nothing peeks to its left at rest; the narrower next frame peeks to the right).
+                // Leftmost card in view = focused (left-anchored multi-browse; nothing left of it).
                 const padLeft = cards[0].offsetLeft;
                 const target = track.scrollLeft + padLeft;
                 let best = 0, bestDist = Infinity;
@@ -6036,9 +6034,30 @@
                     if (d < bestDist) { bestDist = d; best = i; }
                 });
                 featuredIndex = best;
+
+                // M3 multi-browse keylines: from the focused card rightward — large frame(s), one
+                // medium, then a small sliver (≈ the rounded corner). The large count grows with the
+                // carousel's width, and every frame steps down in width to the right. All frames share
+                // one height (derived from the large width) so the carousel never collapses to pills.
+                const cs = getComputedStyle(track);
+                const avail = track.clientWidth - (parseFloat(cs.paddingLeft) || 0) - (parseFloat(cs.paddingRight) || 0);
+                const gap = parseFloat(cs.columnGap || cs.gap) || 16;
+                const SMALL = 56;   // ≈ 2× the 28px corner radius — just the rounded corner shows
+                const PREF = 300;   // preferred large-frame width
+                const largeCount = Math.max(1, Math.floor((avail - SMALL - 80) / (PREF + gap)));
+                // Solve largeCount·L + (medium = 0.6·L) + SMALL + gaps = avail for the large width L,
+                // so large > medium > small always holds.
+                let largeW = (avail - SMALL - gap * (largeCount + 1)) / (largeCount + 0.6);
+                if (largeW < SMALL + 8) largeW = SMALL + 8;
+                const MEDIUM = Math.max(SMALL + 4, Math.round(largeW * 0.6));
+                largeW = Math.round(largeW);
+                const cardH = Math.round(Math.min(480, Math.max(170, largeW * 1.2)));
                 cards.forEach((c, i) => {
+                    const off = i - best;
+                    const w = off < largeCount ? largeW : off === largeCount ? MEDIUM : SMALL;
+                    c.style.flexBasis = w + "px";
+                    c.style.height = cardH + "px";
                     c.classList.toggle("focused", i === best);
-                    c.classList.toggle("lead", i === best);
                 });
 
                 const cur = featuredArticles[best];
