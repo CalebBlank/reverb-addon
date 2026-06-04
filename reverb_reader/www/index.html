@@ -847,6 +847,24 @@
                 display: flex;
                 align-items: center;
             }
+            /* Settings (gear) button below "Add feed" — square, like the collapsed-sidebar icons. */
+            #sync-btn {
+                width: 50px;
+                height: 50px;
+                margin: 2px 12px 10px;
+                border-radius: 14px;
+                border: 1px solid var(--border);
+                background: var(--btn-bg);
+                color: var(--text-sub);
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                cursor: pointer;
+                flex-shrink: 0;
+                transition: color 0.15s, border-color 0.15s;
+            }
+            #sync-btn:hover { color: var(--accent); border-color: var(--accent); }
+            #sync-btn .material-symbols-rounded { font-size: 24px; }
             #home-fab {
                 pointer-events: auto;
                 width: 56px;
@@ -4777,13 +4795,12 @@
                 const addBtn = document.getElementById("add-feed-btn");
                 const syncBtn = document.createElement("button");
                 syncBtn.id = "sync-btn";
+                syncBtn.title = "Settings";
+                syncBtn.setAttribute("aria-label", "Settings");
+                syncBtn.innerHTML = '<span class="material-symbols-rounded">settings</span>';
                 if (addBtn) {
-                    syncBtn.className = addBtn.className;
-                    syncBtn.innerHTML =
-                        '<span class="sidebar-icon"><span class="material-symbols-rounded">sync</span></span><span class="sidebar-text"> Sync</span>';
                     addBtn.insertAdjacentElement("afterend", syncBtn);
                 } else {
-                    syncBtn.textContent = "Sync";
                     document.body.appendChild(syncBtn);
                 }
                 const modal = document.createElement("div");
@@ -4792,7 +4809,13 @@
                     "position:fixed;inset:0;display:none;align-items:center;justify-content:center;background:rgba(0,0,0,.45);z-index:9999";
                 modal.innerHTML = `
                     <div style="background:var(--bg-sidebar,#fff);max-width:420px;width:92%;border-radius:14px;padding:20px;box-shadow:0 12px 40px rgba(0,0,0,.3)">
-                        <h3 style="margin:0 0 4px">Sync with FreshRSS</h3>
+                        <h3 style="margin:0 0 14px">Settings</h3>
+                        <label style="display:block;font-size:12px;opacity:.7;margin-bottom:6px">Appearance</label>
+                        <div style="display:flex;gap:8px;margin-bottom:20px">
+                            <button id="set-theme-light" style="flex:1;padding:10px;border-radius:12px;border:1px solid #8884;background:transparent;color:inherit;cursor:pointer;font-weight:600">☀ Light</button>
+                            <button id="set-theme-dark" style="flex:1;padding:10px;border-radius:12px;border:1px solid #8884;background:transparent;color:inherit;cursor:pointer;font-weight:600">☾ Dark</button>
+                        </div>
+                        <div style="font-size:15px;font-weight:700;margin:0 0 4px">Sync with FreshRSS</div>
                         <p style="margin:0 0 14px;opacity:.7;font-size:13px">Google Reader API (FreshRSS / Miniflux). Enter your server's API URL and API password.</p>
                         <label style="display:block;font-size:12px;opacity:.7">Server API URL</label>
                         <input id="sync-url" placeholder="http://&lt;host&gt;:7077/api/greader.php" style="width:100%;box-sizing:border-box;margin:2px 0 10px;padding:8px;border:1px solid #8884;border-radius:8px;background:transparent;color:inherit">
@@ -4827,8 +4850,25 @@
                         ? "Connected: " + (c.user || c.base)
                         : "";
                 }
+                function applyThemeUI() {
+                    const dark = document.body.classList.contains("dark");
+                    if ($("set-theme-light")) $("set-theme-light").style.outline = dark ? "none" : "2px solid var(--accent)";
+                    if ($("set-theme-dark")) $("set-theme-dark").style.outline = dark ? "2px solid var(--accent)" : "none";
+                }
+                function setTheme(dark) {
+                    document.body.classList.add("theme-fade");
+                    document.body.classList.toggle("dark", dark);
+                    localStorage.setItem("theme", dark ? "dark" : "light");
+                    setTimeout(() => document.body.classList.remove("theme-fade"), 400);
+                    const tt = document.getElementById("theme-toggle");
+                    if (tt) tt.innerHTML = `<span class="material-symbols-rounded">${dark ? "light_mode" : "dark_mode"}</span>`;
+                    applyThemeUI();
+                }
+                $("set-theme-light").addEventListener("click", () => setTheme(false));
+                $("set-theme-dark").addEventListener("click", () => setTheme(true));
                 syncBtn.addEventListener("click", () => {
                     refresh();
+                    applyThemeUI();
                     modal.style.display = "flex";
                 });
                 $("sync-cancel").addEventListener(
