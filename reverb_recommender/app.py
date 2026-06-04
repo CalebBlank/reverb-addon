@@ -61,68 +61,173 @@ _FETCH_UA = (
 # outlets the user does NOT follow, and because the full content lives in the
 # corpus, /article serves them so they open in-reader. Each entry is a feed URL;
 # the human-readable feed title comes from the feed's own <title> at parse time.
-# Curated external pool — outlets the user does NOT already subscribe to, weighted
-# toward their core topics (cooking, design, art, tech, culture, science, games)
-# with a lighter variety spread. URLs validated as live RSS/Atom. Users can extend
-# via the `external_feeds` option; bad/blocked feeds are skipped at fetch time.
-DEFAULT_EXTERNAL_FEEDS = [
-    # ── cooking ──
-    "https://www.bonappetit.com/feed/rss",                              # Bon Appétit
-    "https://www.thekitchn.com/main.rss",                              # The Kitchn
-    "https://www.theguardian.com/food/rss",                            # Guardian Food
-    "https://rss.nytimes.com/services/xml/rss/nyt/DiningandWine.xml",  # NYT Dining
+# ──────────────────────────── source catalog ──────────────────────────────
+# THE curated source directory, as (feed_url, display_name, genre). This single
+# list drives three things, so adding a source here wires it everywhere:
+#   • DEFAULT_EXTERNAL_FEEDS — the external corpus /related + /article draw from
+#   • EXTERNAL_FEED_GENRE     — per-URL genre for genre-aware ranking
+#   • the /catalog endpoint   — powers the app's Discover ("Add sources") page
+# Outlets the user does NOT already subscribe to, weighted toward their core
+# topics (design, art, architecture, cooking, tech, science, culture, games)
+# with a lighter variety spread. URLs validated live as RSS/Atom. Keyed by exact
+# feed URL (not host): several outlets repeat across genres (e.g. The Guardian),
+# which a host-keyed map would collapse. Users can still extend the corpus via the
+# `external_feeds` option (those carry genre "" — no genre signal, which is fine).
+CATALOG = [
     # ── design ──
-    "https://www.yankodesign.com/feed/",                              # Yanko Design
-    "https://www.designweek.co.uk/feed/",                            # Design Week
-    "https://www.creativebloq.com/feed",                            # Creative Bloq
-    "https://eyeondesign.aiga.org/feed/",                           # AIGA Eye on Design
-    "https://www.sightunseen.com/feed/",                            # Sight Unseen
-    "https://www.printmag.com/feed/",                               # PRINT Magazine
-    "https://www.underconsideration.com/brandnew/atom.xml",        # Brand New (branding)
-    # ── architecture ──
-    "https://www.archdaily.com/rss/",                              # ArchDaily
-    "https://www.architecturaldigest.com/feed/rss",               # Architectural Digest
-    "https://architizer.com/blog/feed/",                          # Architizer
-    "https://www.archpaper.com/feed/",                            # The Architect's Newspaper
+    ("https://www.yankodesign.com/feed/", "Yanko Design", "design"),
+    ("https://www.designweek.co.uk/feed/", "Design Week", "design"),
+    ("https://www.creativebloq.com/feed", "Creative Bloq", "design"),
+    ("https://eyeondesign.aiga.org/feed/", "AIGA Eye on Design", "design"),
+    ("https://www.sightunseen.com/feed/", "Sight Unseen", "design"),
+    ("https://www.printmag.com/feed/", "PRINT Magazine", "design"),
+    ("https://www.underconsideration.com/brandnew/atom.xml", "Brand New", "design"),
+    ("https://www.dezeen.com/feed/", "Dezeen", "design"),
+    ("https://www.core77.com/feed", "Core77", "design"),
+    ("https://www.designboom.com/feed/", "designboom", "design"),
+    ("https://thedieline.com/feed/", "The Dieline", "design"),
+    ("https://design-milk.com/feed/", "Design Milk", "design"),
+    ("https://www.swiss-miss.com/feed", "swissmiss", "design"),
+    ("https://www.fastcompany.com/section/design/rss", "Fast Company Design", "design"),
     # ── art ──
-    "https://hyperallergic.com/feed/",                                # Hyperallergic
-    "https://news.artnet.com/feed",                                   # Artnet News
-    "https://www.artnews.com/feed/",                                  # ARTnews
-    "https://www.juxtapoz.com/feed/",                                # Juxtapoz
-    "https://www.booooooom.com/feed/",                              # Booooooom
-    "https://www.artforum.com/feed/",                              # Artforum
-    "https://aestheticamagazine.com/feed/",                       # Aesthetica
-    # ── tech ──
-    "https://www.wired.com/feed/rss",                                 # Wired
-    "https://techcrunch.com/feed/",                                   # TechCrunch
-    "https://www.engadget.com/rss.xml",                              # Engadget
-    "https://www.technologyreview.com/feed/",                        # MIT Tech Review
-    "https://www.theregister.com/headlines.atom",                    # The Register
-    # ── culture ──
-    "https://www.theatlantic.com/feed/all/",                         # The Atlantic
-    "https://aeon.co/feed.rss",                                      # Aeon
-    "https://www.theguardian.com/culture/rss",                      # Guardian Culture
-    "https://www.newyorker.com/feed/culture",                       # New Yorker Culture
+    ("https://hyperallergic.com/feed/", "Hyperallergic", "art"),
+    ("https://news.artnet.com/feed", "Artnet News", "art"),
+    ("https://www.artnews.com/feed/", "ARTnews", "art"),
+    ("https://www.juxtapoz.com/feed/", "Juxtapoz", "art"),
+    ("https://www.booooooom.com/feed/", "Booooooom", "art"),
+    ("https://www.artforum.com/feed/", "Artforum", "art"),
+    ("https://aestheticamagazine.com/feed/", "Aesthetica", "art"),
+    ("https://www.thisiscolossal.com/feed/", "Colossal", "art"),
+    ("https://www.artsy.net/rss/news", "Artsy", "art"),
+    ("https://www.theartnewspaper.com/rss.xml", "The Art Newspaper", "art"),
+    # ── architecture ──
+    ("https://www.archdaily.com/rss/", "ArchDaily", "architecture"),
+    ("https://www.architecturaldigest.com/feed/rss", "Architectural Digest", "architecture"),
+    ("https://architizer.com/blog/feed/", "Architizer", "architecture"),
+    ("https://www.archpaper.com/feed/", "The Architect's Newspaper", "architecture"),
+    ("https://inhabitat.com/feed/", "Inhabitat", "architecture"),
+    ("https://archinect.com/feed/1/news", "Archinect", "architecture"),
+    ("https://parametric-architecture.com/feed/", "Parametric Architecture", "architecture"),
+    ("https://www.dwell.com/@dwell/rss", "Dwell", "architecture"),
+    ("https://www.architectural-review.com/feed", "The Architectural Review", "architecture"),
+    # ── cooking ──
+    ("https://www.bonappetit.com/feed/rss", "Bon Appétit", "cooking"),
+    ("https://www.thekitchn.com/main.rss", "The Kitchn", "cooking"),
+    ("https://www.theguardian.com/food/rss", "Guardian Food", "cooking"),
+    ("https://rss.nytimes.com/services/xml/rss/nyt/DiningandWine.xml", "NYT Dining", "cooking"),
+    ("https://www.eater.com/rss/index.xml", "Eater", "cooking"),
+    ("https://www.davidlebovitz.com/feed/", "David Lebovitz", "cooking"),
+    ("https://www.101cookbooks.com/feed", "101 Cookbooks", "cooking"),
+    ("https://www.budgetbytes.com/feed/", "Budget Bytes", "cooking"),
+    ("https://www.kingarthurbaking.com/blog/feed", "King Arthur Baking", "cooking"),
+    ("https://www.bbcgoodfood.com/feed", "BBC Good Food", "cooking"),
+    # ── technology ──
+    ("https://www.wired.com/feed/rss", "Wired", "technology"),
+    ("https://techcrunch.com/feed/", "TechCrunch", "technology"),
+    ("https://www.engadget.com/rss.xml", "Engadget", "technology"),
+    ("https://www.technologyreview.com/feed/", "MIT Technology Review", "technology"),
+    ("https://www.theregister.com/headlines.atom", "The Register", "technology"),
+    ("https://www.theverge.com/rss/index.xml", "The Verge", "technology"),
+    ("https://feeds.arstechnica.com/arstechnica/index", "Ars Technica", "technology"),
+    ("https://hnrss.org/frontpage", "Hacker News", "technology"),
+    ("https://gizmodo.com/rss", "Gizmodo", "technology"),
     # ── science ──
-    "https://api.quantamagazine.org/feed/",                         # Quanta
-    "https://www.sciencedaily.com/rss/all.xml",                    # ScienceDaily
-    "https://www.scientificamerican.com/platform/syndication/rss/", # Scientific American
-    "https://www.sciencenews.org/feed",                            # Science News
+    ("https://api.quantamagazine.org/feed/", "Quanta Magazine", "science"),
+    ("https://www.sciencedaily.com/rss/all.xml", "ScienceDaily", "science"),
+    ("https://www.scientificamerican.com/platform/syndication/rss/", "Scientific American", "science"),
+    ("https://www.sciencenews.org/feed", "Science News", "science"),
+    ("https://www.nature.com/nature.rss", "Nature", "science"),
+    ("https://phys.org/rss-feed/", "Phys.org", "science"),
+    ("https://nautil.us/feed/", "Nautilus", "science"),
+    ("https://www.newscientist.com/section/news/feed/", "New Scientist", "science"),
+    ("https://eos.org/feed", "Eos", "science"),
+    ("https://bigthink.com/feed/", "Big Think", "science"),
+    # ── culture ──
+    ("https://www.theatlantic.com/feed/all/", "The Atlantic", "culture"),
+    ("https://aeon.co/feed.rss", "Aeon", "culture"),
+    ("https://www.theguardian.com/culture/rss", "Guardian Culture", "culture"),
+    ("https://www.newyorker.com/feed/culture", "The New Yorker", "culture"),
+    ("https://www.vox.com/rss/index.xml", "Vox", "culture"),
+    ("https://longreads.com/feed/", "Longreads", "culture"),
+    ("https://www.theparisreview.org/blog/feed/", "The Paris Review", "culture"),
+    ("https://pitchfork.com/rss/news/", "Pitchfork", "culture"),
+    ("https://lithub.com/feed/", "Literary Hub", "culture"),
+    ("https://www.dazeddigital.com/rss", "Dazed", "culture"),
     # ── games ──
-    "https://www.eurogamer.net/feed",                              # Eurogamer
-    "https://www.pcgamer.com/rss/",                               # PC Gamer
-    "https://kotaku.com/rss",                                     # Kotaku
-    # ── variety: world / business / health / sports / climate ──
-    "http://feeds.bbci.co.uk/news/rss.xml",                       # BBC News
-    "https://feeds.npr.org/1001/rss.xml",                        # NPR News
-    "https://www.theguardian.com/world/rss",                     # Guardian World
-    "https://www.aljazeera.com/xml/rss/all.xml",                # Al Jazeera
-    "http://feeds.bbci.co.uk/news/business/rss.xml",            # BBC Business
-    "https://feeds.npr.org/1128/rss.xml",                       # NPR Health
-    "http://feeds.bbci.co.uk/sport/rss.xml",                   # BBC Sport
-    "https://grist.org/feed/",                                 # Grist (climate)
-    "https://www.theguardian.com/environment/rss",            # Guardian Environment
+    ("https://www.eurogamer.net/feed", "Eurogamer", "games"),
+    ("https://www.pcgamer.com/rss/", "PC Gamer", "games"),
+    ("https://kotaku.com/rss", "Kotaku", "games"),
+    ("https://www.polygon.com/rss/index.xml", "Polygon", "games"),
+    ("https://www.rockpapershotgun.com/feed", "Rock Paper Shotgun", "games"),
+    ("https://www.gamedeveloper.com/rss.xml", "Game Developer", "games"),
+    ("https://www.gamesindustry.biz/feed", "GamesIndustry.biz", "games"),
+    # ── world / business / health / sports / climate ──
+    ("http://feeds.bbci.co.uk/news/rss.xml", "BBC News", "world"),
+    ("https://feeds.npr.org/1001/rss.xml", "NPR News", "world"),
+    ("https://www.theguardian.com/world/rss", "Guardian World", "world"),
+    ("https://www.aljazeera.com/xml/rss/all.xml", "Al Jazeera", "world"),
+    ("http://feeds.bbci.co.uk/news/business/rss.xml", "BBC Business", "business"),
+    ("https://feeds.npr.org/1128/rss.xml", "NPR Health", "health"),
+    ("http://feeds.bbci.co.uk/sport/rss.xml", "BBC Sport", "sports"),
+    ("https://grist.org/feed/", "Grist", "climate"),
+    ("https://www.theguardian.com/environment/rss", "Guardian Environment", "climate"),
 ]
+
+# Derived views over CATALOG (the single source of truth above).
+DEFAULT_EXTERNAL_FEEDS = [url for (url, _name, _genre) in CATALOG]
+CATALOG_NAME = {url: name for (url, name, _genre) in CATALOG}
+
+# Discover-page sections: (display label, [genres in that row]). Small long-tail
+# genres share one row; this order is the order the rows appear in the app.
+CATALOG_SECTIONS = [
+    ("Design", ["design"]),
+    ("Art", ["art"]),
+    ("Architecture", ["architecture"]),
+    ("Cooking", ["cooking"]),
+    ("Technology", ["technology"]),
+    ("Science", ["science"]),
+    ("Culture", ["culture"]),
+    ("Games", ["games"]),
+    ("World & More", ["world", "business", "health", "sports", "climate"]),
+]
+
+
+def _catalog_host(url):
+    """Bare host for logo/display (``www.`` stripped, lowercased) — matches the
+    app's ``hostOf`` so Discover logos resolve identically to the feed view.
+    Falls back to "" on a parse failure."""
+    try:
+        h = urllib.parse.urlparse(url).netloc.lower()
+        return h[4:] if h.startswith("www.") else h
+    except Exception:
+        return ""
+
+
+def catalog_payload():
+    """The Discover catalog grouped into display sections (see CATALOG_SECTIONS).
+    Purely derived from the CATALOG constant — no corpus needed — so /catalog
+    answers instantly even before the index builds. Each source carries:
+    feedUrl, name, genre, host, siteUrl."""
+    by_genre = {}
+    for entry in CATALOG:
+        by_genre.setdefault(entry[2], []).append(entry)
+    sections = []
+    for (label, genres) in CATALOG_SECTIONS:
+        sources = []
+        for g in genres:
+            for (url, name, genre) in by_genre.get(g, []):
+                host = _catalog_host(url)
+                sources.append({
+                    "feedUrl": url,
+                    "name": name,
+                    "genre": genre,
+                    "host": host,
+                    "siteUrl": ("https://" + host + "/") if host else url,
+                })
+        if sources:
+            sections.append({"label": label, "genres": genres, "sources": sources})
+    return {"categories": sections}
+
 
 # ───────────────────────────── genre ──────────────────────────────
 # A SOURCE-GENRE signal: each article carries a normalized lowercase ``genre``
@@ -132,70 +237,9 @@ DEFAULT_EXTERNAL_FEEDS = [
 # piece about "paper" pulling an "e-paper display" tech story, or "rice paper"
 # recipe) get down-weighted relative to true same-genre matches.
 
-# Map every DEFAULT_EXTERNAL_FEEDS URL -> genre, grouped exactly like the topic
-# sections above. Keyed by the EXACT feed URL (not host): several outlets appear
-# under multiple genres (theguardian.com is food/culture/world/environment;
-# feeds.bbci.co.uk is news/business/sport; feeds.npr.org is news/health), so a
-# host-keyed map would silently collapse them to whichever section came last.
-# User-added feeds are absent here -> genre "" (no genre signal), which is fine.
-EXTERNAL_FEED_GENRE = {
-    # ── cooking ──
-    "https://www.bonappetit.com/feed/rss": "cooking",
-    "https://www.thekitchn.com/main.rss": "cooking",
-    "https://www.theguardian.com/food/rss": "cooking",
-    "https://rss.nytimes.com/services/xml/rss/nyt/DiningandWine.xml": "cooking",
-    # ── design ──
-    "https://www.yankodesign.com/feed/": "design",
-    "https://www.designweek.co.uk/feed/": "design",
-    "https://www.creativebloq.com/feed": "design",
-    "https://eyeondesign.aiga.org/feed/": "design",
-    "https://www.sightunseen.com/feed/": "design",
-    "https://www.printmag.com/feed/": "design",
-    "https://www.underconsideration.com/brandnew/atom.xml": "design",
-    # ── architecture ──
-    "https://www.archdaily.com/rss/": "architecture",
-    "https://www.architecturaldigest.com/feed/rss": "architecture",
-    "https://architizer.com/blog/feed/": "architecture",
-    "https://www.archpaper.com/feed/": "architecture",
-    # ── art ──
-    "https://hyperallergic.com/feed/": "art",
-    "https://news.artnet.com/feed": "art",
-    "https://www.artnews.com/feed/": "art",
-    "https://www.juxtapoz.com/feed/": "art",
-    "https://www.booooooom.com/feed/": "art",
-    "https://www.artforum.com/feed/": "art",
-    "https://aestheticamagazine.com/feed/": "art",
-    # ── tech ──
-    "https://www.wired.com/feed/rss": "technology",
-    "https://techcrunch.com/feed/": "technology",
-    "https://www.engadget.com/rss.xml": "technology",
-    "https://www.technologyreview.com/feed/": "technology",
-    "https://www.theregister.com/headlines.atom": "technology",
-    # ── culture ──
-    "https://www.theatlantic.com/feed/all/": "culture",
-    "https://aeon.co/feed.rss": "culture",
-    "https://www.theguardian.com/culture/rss": "culture",
-    "https://www.newyorker.com/feed/culture": "culture",
-    # ── science ──
-    "https://api.quantamagazine.org/feed/": "science",
-    "https://www.sciencedaily.com/rss/all.xml": "science",
-    "https://www.scientificamerican.com/platform/syndication/rss/": "science",
-    "https://www.sciencenews.org/feed": "science",
-    # ── games ──
-    "https://www.eurogamer.net/feed": "games",
-    "https://www.pcgamer.com/rss/": "games",
-    "https://kotaku.com/rss": "games",
-    # ── variety: world / business / health / sports / climate ──
-    "http://feeds.bbci.co.uk/news/rss.xml": "world",
-    "https://feeds.npr.org/1001/rss.xml": "world",
-    "https://www.theguardian.com/world/rss": "world",
-    "https://www.aljazeera.com/xml/rss/all.xml": "world",
-    "http://feeds.bbci.co.uk/news/business/rss.xml": "business",
-    "https://feeds.npr.org/1128/rss.xml": "health",
-    "http://feeds.bbci.co.uk/sport/rss.xml": "sports",
-    "https://grist.org/feed/": "climate",
-    "https://www.theguardian.com/environment/rss": "climate",
-}
+# Per-URL genre, derived from the CATALOG above (the single source of truth).
+# User-added `external_feeds` are absent here -> genre "" (no genre signal), fine.
+EXTERNAL_FEED_GENRE = {url: genre for (url, _name, genre) in CATALOG}
 
 # FreshRSS FOLDER (GReader label) -> genre. The folder name is lowercased before
 # lookup. Misses fall through to the lowercased folder itself (so same-folder own
@@ -1215,6 +1259,12 @@ def make_handler(indexer, opts):
                     item_id = (qs.get("id") or [None])[0]
                     # bare article dict (or {} when not found); never 500
                     self._send_json(article_by_link(idx, link=link, item_id=item_id))
+                    return
+
+                if path == "/catalog":
+                    # The curated source directory for the app's Discover page.
+                    # Static (from CATALOG) so it answers even before the corpus builds.
+                    self._send_json(catalog_payload())
                     return
 
                 self._send_json({"error": "not found", "path": path}, status=404)

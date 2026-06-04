@@ -25,6 +25,11 @@ from app import (
     merge_articles,
     genre_for_folder,
     EXTERNAL_FEED_GENRE,
+    catalog_payload,
+    CATALOG,
+    CATALOG_NAME,
+    CATALOG_SECTIONS,
+    DEFAULT_EXTERNAL_FEEDS,
 )
 
 
@@ -399,6 +404,40 @@ def check(cond, msg):
         print(f"  FAIL: {msg}")
 
 
+def test_catalog():
+    print("Validating the source CATALOG + /catalog payload...")
+    urls = [u for (u, _n, _g) in CATALOG]
+    check(len(urls) == len(set(urls)), "no duplicate feed URLs in CATALOG")
+    check(DEFAULT_EXTERNAL_FEEDS == urls,
+          "DEFAULT_EXTERNAL_FEEDS derives from CATALOG (order preserved)")
+    check(all(EXTERNAL_FEED_GENRE.get(u) == g for (u, _n, g) in CATALOG),
+          "EXTERNAL_FEED_GENRE matches every CATALOG entry's genre")
+    check(all(CATALOG_NAME.get(u) == n for (u, n, _g) in CATALOG),
+          "CATALOG_NAME matches every CATALOG entry's name")
+    check(all(n.strip() and g.strip() for (_u, n, g) in CATALOG),
+          "every CATALOG entry has a non-empty name and genre")
+
+    payload = catalog_payload()
+    cats = payload.get("categories")
+    check(isinstance(cats, list) and len(cats) == len(CATALOG_SECTIONS),
+          "/catalog returns one category per CATALOG_SECTIONS row")
+    flat = [s for c in cats for s in c["sources"]]
+    check(len(flat) == len(CATALOG),
+          "every CATALOG source appears in exactly one /catalog section")
+    check({s["feedUrl"] for s in flat} == set(urls),
+          "/catalog covers all CATALOG feed URLs")
+    fields = {"feedUrl", "name", "genre", "host", "siteUrl"}
+    check(all(fields.issubset(s.keys()) for s in flat),
+          f"each /catalog source has the contract fields ({sorted(fields)})")
+    check(all(s["host"] and not s["host"].startswith("www.") for s in flat),
+          "each source host is non-empty and www-stripped")
+    by_label = {c["label"]: c["sources"] for c in cats}
+    check(len(by_label.get("Design", [])) >= 8, "Design row has >= 8 sources")
+    check(len(by_label.get("Cooking", [])) >= 6, "Cooking row has >= 6 sources")
+    check(len(by_label.get("World & More", [])) >= 5,
+          "World & More groups the long-tail genres into one row")
+
+
 def main():
     print("Loading corpus...")
     gr_raw, gr_path = load_gr_items()
@@ -510,6 +549,9 @@ def main():
     # ── source-genre signal: assignment + same-genre weighting ──
     test_genre_assignment()
     test_genre_weighting()
+
+    # ── Discover catalog: single-source-of-truth derivations + /catalog payload ──
+    test_catalog()
 
     # ── an EXTERNAL article, mixed into a build_index corpus, is returned by related() ──
     print("Mixing external (parse_feed) articles into the corpus and querying related()...")

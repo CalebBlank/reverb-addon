@@ -1,5 +1,5 @@
 name: Reverb Recommender
-version: "0.1.8"
+version: "0.1.9"
 slug: reverb_recommender
 description: >-
   Related-articles recommender for the Reverb RSS reader. Builds a TF-IDF index
