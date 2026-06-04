@@ -848,8 +848,9 @@
             .fh-icon-btn .material-symbols-rounded { font-size: 22px; }
             #home-fab-wrap {
                 position: relative;
-                display: flex;
-                align-items: center;
+                width: 56px;
+                height: 56px;
+                flex-shrink: 0;
             }
             /* Settings (gear) button below "Add feed" — square, like the collapsed-sidebar icons. */
             #sync-btn {
@@ -869,44 +870,64 @@
             }
             #sync-btn:hover { color: var(--accent); border-color: var(--accent); }
             #sync-btn .material-symbols-rounded { font-size: 24px; }
-            #home-fab {
-                pointer-events: auto;
+            /* ── Morphing display FAB (home + reader): a 56px accent circle that expands to BECOME
+               its menu — the icon cross-fades into the controls — Android-style. The wrap reserves
+               the 56px footprint; the FAB is an absolute overlay so it grows over the content. ── */
+            #home-fab, #reader-fab {
+                position: absolute;
                 width: 56px;
                 height: 56px;
-                border-radius: 18px;
+                border-radius: 28px;
                 border: none;
+                padding: 0;
                 background: var(--accent);
                 color: #fff;
+                cursor: pointer;
+                overflow: hidden;
+                box-shadow: 0 4px 14px color-mix(in srgb, var(--accent) 45%, transparent);
+                transition:
+                    width 0.34s var(--spring),
+                    height 0.34s var(--spring),
+                    border-radius 0.28s var(--spring),
+                    background-color 0.26s,
+                    color 0.26s,
+                    box-shadow 0.2s;
+                z-index: 40;
+            }
+            #home-fab { top: 0; right: 0; }
+            body.dark #home-fab, body.dark #reader-fab { color: #15151a; }
+            #home-fab:hover, #reader-fab:hover {
+                box-shadow: 0 6px 20px color-mix(in srgb, var(--accent) 60%, transparent);
+            }
+            .fab-icon {
+                position: absolute;
+                inset: 0;
                 display: flex;
                 align-items: center;
                 justify-content: center;
-                cursor: pointer;
-                box-shadow: 0 4px 14px color-mix(in srgb, var(--accent) 45%, transparent);
-                transition: box-shadow 0.18s, transform 0.18s var(--spring), border-radius 0.2s var(--spring);
+                transition: opacity 0.14s;
             }
-            body.dark #home-fab { color: #15151a; }
-            #home-fab .material-symbols-rounded { font-size: 28px; }
-            #home-fab:hover { box-shadow: 0 6px 20px color-mix(in srgb, var(--accent) 60%, transparent); }
-            #home-fab.open { border-radius: 28px; }
-            #home-fab-panel {
-                pointer-events: auto;
-                position: absolute;
-                top: 60px;
-                right: 0;
-                background: var(--bg-card);
-                border-radius: 20px;
-                box-shadow: 0 10px 30px rgba(0, 0, 0, 0.24);
-                border: 1px solid var(--border);
-                padding: 14px;
-                display: none;
+            .fab-icon .material-symbols-rounded { font-size: 28px; }
+            .fab-body {
+                box-sizing: border-box;
+                width: 264px;
+                padding: 16px;
+                display: flex;
                 flex-direction: column;
                 gap: 14px;
-                min-width: 240px;
+                opacity: 0;
+                transition: opacity 0.16s;
             }
-            #home-fab-panel.open {
-                display: flex;
-                animation: in-down 0.16s ease;
+            #home-fab.open, #reader-fab.open {
+                width: 264px;
+                border-radius: 22px;
+                background: var(--bg-card);
+                color: var(--text);
+                box-shadow: 0 12px 34px rgba(0, 0, 0, 0.26);
+                cursor: default;
             }
+            #home-fab.open .fab-icon, #reader-fab.open .fab-icon { opacity: 0; pointer-events: none; }
+            #home-fab.open .fab-body, #reader-fab.open .fab-body { opacity: 1; transition-delay: 0.08s; }
             .hf-row {
                 display: flex;
                 align-items: center;
@@ -3922,20 +3943,26 @@
             // controls in a popover (Android-style). The control IDs inside are unchanged, so
             // mountViewToggle/mountCardSlider/mountThemeToggle/mountRefreshButton still bind.
             function mountHomeFab() {
-                const fab = document.getElementById("home-fab");
-                const panel = document.getElementById("home-fab-panel");
-                if (!fab || !panel) return;
-                const close = () => {
-                    panel.classList.remove("open");
-                    fab.classList.remove("open");
+                mountMorphFab(document.getElementById("home-fab"));
+            }
+
+            // Shared morphing-FAB behavior: the 56px circle expands to BECOME its .fab-body menu.
+            // Opening sets an explicit pixel height (the body's natural height) so width AND height
+            // animate together; closing clears it. Clicks inside keep it open; an outside click closes.
+            function mountMorphFab(fab) {
+                if (!fab) return;
+                const body = fab.querySelector(".fab-body");
+                const close = () => { fab.classList.remove("open"); fab.style.height = ""; };
+                const open = () => {
+                    fab.classList.add("open");
+                    if (body) fab.style.height = body.offsetHeight + "px";
                 };
                 fab.addEventListener("click", (e) => {
                     e.stopPropagation();
-                    panel.classList.toggle("open");
-                    fab.classList.toggle("open");
+                    if (!fab.classList.contains("open")) open();
                 });
                 document.addEventListener("click", (e) => {
-                    if (!panel.contains(e.target) && !fab.contains(e.target)) close();
+                    if (fab.classList.contains("open") && !fab.contains(e.target)) close();
                 });
             }
 
@@ -5456,18 +5483,20 @@
                         <div class="feed-header-actions">
                             <button id="refresh-btn" class="fh-icon-btn" title="Refresh"><span class="refresh-icon material-symbols-rounded">refresh</span></button>
                             <div id="home-fab-wrap">
-                                <button id="home-fab" title="Display options" aria-label="Display options"><span class="material-symbols-rounded">tune</span></button>
-                                <div id="home-fab-panel">
-                                    <div class="hf-row">
-                                        <span class="hf-label">View</span>
-                                        <button id="view-toggle" title="Switch to list view"><span class="material-symbols-rounded">grid_view</span></button>
-                                    </div>
-                                    <div class="hf-row">
-                                        <span class="hf-label">Size</span>
-                                        <input id="card-size" type="range" min="0" max="3" value="0" step="1">
-                                    </div>
-                                    <div class="hf-row hf-row-btns">
-                                        <button id="theme-toggle" title="Toggle dark mode"><span class="material-symbols-rounded">dark_mode</span></button>
+                                <div id="home-fab" role="button" tabindex="0" title="Display options" aria-label="Display options">
+                                    <span class="fab-icon"><span class="material-symbols-rounded">tune</span></span>
+                                    <div class="fab-body">
+                                        <div class="hf-row">
+                                            <span class="hf-label">View</span>
+                                            <button id="view-toggle" title="Switch to list view"><span class="material-symbols-rounded">grid_view</span></button>
+                                        </div>
+                                        <div class="hf-row">
+                                            <span class="hf-label">Size</span>
+                                            <input id="card-size" type="range" min="0" max="3" value="0" step="1">
+                                        </div>
+                                        <div class="hf-row hf-row-btns">
+                                            <button id="theme-toggle" title="Toggle dark mode"><span class="material-symbols-rounded">dark_mode</span></button>
+                                        </div>
                                     </div>
                                 </div>
                             </div>
@@ -6347,18 +6376,20 @@
                         <div class="feed-header-actions">
                             <button id="refresh-btn" class="fh-icon-btn" title="Refresh"><span class="refresh-icon material-symbols-rounded">refresh</span></button>
                             <div id="home-fab-wrap">
-                                <button id="home-fab" title="Display options" aria-label="Display options"><span class="material-symbols-rounded">tune</span></button>
-                                <div id="home-fab-panel">
-                                    <div class="hf-row">
-                                        <span class="hf-label">View</span>
-                                        <button id="view-toggle" title="Switch to list view"><span class="material-symbols-rounded">grid_view</span></button>
-                                    </div>
-                                    <div class="hf-row">
-                                        <span class="hf-label">Size</span>
-                                        <input id="card-size" type="range" min="0" max="3" value="0" step="1">
-                                    </div>
-                                    <div class="hf-row hf-row-btns">
-                                        <button id="theme-toggle" title="Toggle dark mode"><span class="material-symbols-rounded">dark_mode</span></button>
+                                <div id="home-fab" role="button" tabindex="0" title="Display options" aria-label="Display options">
+                                    <span class="fab-icon"><span class="material-symbols-rounded">tune</span></span>
+                                    <div class="fab-body">
+                                        <div class="hf-row">
+                                            <span class="hf-label">View</span>
+                                            <button id="view-toggle" title="Switch to list view"><span class="material-symbols-rounded">grid_view</span></button>
+                                        </div>
+                                        <div class="hf-row">
+                                            <span class="hf-label">Size</span>
+                                            <input id="card-size" type="range" min="0" max="3" value="0" step="1">
+                                        </div>
+                                        <div class="hf-row hf-row-btns">
+                                            <button id="theme-toggle" title="Toggle dark mode"><span class="material-symbols-rounded">dark_mode</span></button>
+                                        </div>
                                     </div>
                                 </div>
                             </div>
