@@ -213,7 +213,7 @@
                 flex-shrink: 0;
             }
             #left.collapsed #sidebar-top {
-                padding: 28px 4px 20px;
+                padding: 24px 4px 4px;
                 justify-content: center;
             }
             #sidebar-collapse-btn {
@@ -671,17 +671,24 @@
                 width: 50px;
                 height: 50px;
                 padding: 0;
-                margin: 8px auto;
+                margin: 11px auto;
                 justify-content: center;
                 gap: 0;
                 border-radius: 12px;
             }
+            /* The settings gear is the last item — give it breathing room below. */
+            #left.collapsed #sync-btn { margin-bottom: 24px; }
+            /* Tighten the gap above Home (to the collapse button) and open up Home→Discover.
+               (#left-scroll is block flow, so adjacent vertical margins collapse — set them on the
+               element below the gap we want to size.) */
+            #left.collapsed #home-link { margin-top: 4px; }
+            #left.collapsed #discover-link { margin-top: 24px; }
             #left.collapsed .sidebar-text,
             #left.collapsed .feed-item span {
                 display: none;
             }
             #left.collapsed #left-scroll {
-                padding: 8px 4px;
+                padding: 2px 4px;
             }
             #left.collapsed .category {
                 display: none;
@@ -846,7 +853,7 @@
             #sync-btn {
                 width: 50px;
                 height: 50px;
-                margin: 2px 12px 10px;
+                margin: 2px 12px 24px;
                 border-radius: 14px;
                 border: 1px solid var(--border);
                 background: var(--btn-bg);
@@ -1651,7 +1658,7 @@
                    and thus its overflow-clip edge — equals the feed grid's content width. */
                 padding: 24px clamp(16px, 12%, 80px);
                 margin-top: 80px;
-                margin-bottom: 80px;
+                margin-bottom: 36px;
                 overflow-x: clip;
                 overflow-y: visible;
             }
@@ -1961,8 +1968,8 @@
             #featured-track {
                 display: flex;
                 flex-direction: row;
-                gap: 0; /* gaps are per-card margins (JS) so collapsed cards add no space */
-                overflow: hidden;
+                gap: 0; /* gaps are per-card margins set in JS */
+                overflow: visible; /* don't clip card borders/shadows — the 5 cards already fit exactly */
                 width: auto;
                 height: auto;
                 position: static;
@@ -2861,6 +2868,7 @@
 
             /* ── Add-feed button ── */
             #add-feed-btn {
+                display: none !important; /* removed — add feeds from the Discover page instead */
                 padding: 9px 12px 9px 16px;
                 margin: 16px 54px;
                 box-sizing: border-box;
@@ -6033,25 +6041,12 @@
                 section.innerHTML = `
                     <div id="featured-track"></div>
                     <div id="featured-caption"></div>
-                    <div id="featured-dots"></div>
                 `;
 
                 const track = document.getElementById("featured-track");
                 featuredArticles.forEach(({ feed, item }) =>
                     track.appendChild(makeFeaturedCard(feed, item)),
                 );
-
-                const dotsEl = document.getElementById("featured-dots");
-                featuredArticles.forEach((_, i) => {
-                    const dot = document.createElement("span");
-                    dot.className = "featured-dot" + (i === 0 ? " active" : "");
-                    dot.addEventListener("click", () => {
-                        featuredIndex = i;
-                        positionCarousel();
-                        startCarouselTimer();
-                    });
-                    dotsEl.appendChild(dot);
-                });
 
                 // Focus is driven by featuredIndex (tap a peek to focus it, swipe, dots, arrows, or
                 // the auto-advance timer); _syncFeaturedFromScroll reflows the frame sizes.
@@ -6109,7 +6104,7 @@
                 // small (2+ away). Widths are proportional to those weights so the row always fills
                 // the carousel exactly, for any focused position.
                 const cardArea = Math.max(1, avail - gap * (n - 1));
-                const weightFor = (d) => (d === 0 ? 3 : d === 1 ? 2 : 1);
+                const weightFor = (d) => (d === 0 ? 4.5 : d === 1 ? 2 : 0.7);
                 let totalW = 0;
                 cards.forEach((_, i) => { totalW += weightFor(Math.abs(i - featuredIndex)); });
                 const cardH = Math.round(Math.min(300, Math.max(190, avail * 0.3)));
@@ -6124,10 +6119,6 @@
                 const cur = featuredArticles[featuredIndex];
                 const accent = (cards[featuredIndex] && cards[featuredIndex].style.getPropertyValue("--item-accent")) || "";
                 if (cur) setBackdropImage(getImage(cur.item));
-                document.querySelectorAll(".featured-dot").forEach((d, i) => {
-                    d.classList.toggle("active", i === featuredIndex);
-                    d.style.background = i === featuredIndex && accent ? accent : "";
-                });
                 const cap = document.getElementById("featured-caption");
                 if (cap && cur) {
                     cap.innerHTML =
