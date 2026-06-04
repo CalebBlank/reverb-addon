@@ -1085,6 +1085,7 @@ class Indexer:
         self._token = None
         self._lock = threading.Lock()
         self._index = empty_index()
+        self._featured = []
         # Built-in defaults merged with the user's external_feeds option (deduped).
         self.external_feeds = resolve_external_feeds(opts.get("external_feeds"))
         print(
@@ -1096,6 +1097,11 @@ class Indexer:
     def index(self):
         with self._lock:
             return self._index
+
+    @property
+    def featured(self):
+        with self._lock:
+            return self._featured
 
     # ---- network ----
 
@@ -1196,6 +1202,19 @@ class Indexer:
                 with self._lock:
                     kept = self._index["count"]
                 print(f"[recommender] combined fetch still empty; keeping previous index ({kept} articles)", flush=True)
+
+            # Featured = the user's OWN recent articles blended with Bluesky engagement. Computed
+            # AFTER the index is published so Bluesky latency never delays /related or /catalog.
+            if fresh_articles:
+                try:
+                    feat = compute_featured(fresh_articles, self.opts)
+                    if feat:
+                        with self._lock:
+                            self._featured = feat
+                        n_eng = sum(1 for x in feat if x["engagement"]["posts"])
+                        print(f"[recommender] featured: {len(feat)} articles ({n_eng} with Bluesky engagement)", flush=True)
+                except Exception as e:
+                    print(f"[recommender] featured compute failed ({e}); keeping previous", flush=True)
         except Exception as e:
             # outage / parse error: keep serving last good index
             print(f"[recommender] refresh failed ({e}); serving last good index", flush=True)
@@ -1306,12 +1325,50 @@ def fetch_bluesky_discussions(url, handle, app_password, timeout=8):
                 "url": ("https://bsky.app/profile/%s/post/%s" % (h, rkey)) if (h and rkey) else "",
                 "points": int(p.get("likeCount") or 0),
                 "comments": int(p.get("replyCount") or 0),
+                "reposts": int(p.get("repostCount") or 0),
                 "createdAt": rec.get("createdAt") or "",
             })
         return out
     except Exception as e:
         print(f"[recommender] Bluesky discussions failed: {e}", flush=True)
         return []
+
+
+def bluesky_engagement(link, handle, app_password, timeout=6):
+    """Total Bluesky likes+reposts across posts that actually link `link`.
+
+    Used to rank featured articles. searchPosts is fuzzy and (importantly) most link shares
+    carry the URL in an embed card rather than the post text, so we keep only posts whose text
+    contains the URL OR whose external embed resolves to it. Best-effort: returns all-zero on
+    missing creds / any error so it never blocks the refresh."""
+    zero = {"score": 0, "likes": 0, "reposts": 0, "posts": 0}
+    if not (link and handle and app_password):
+        return zero
+    try:
+        tok = _bluesky_token(handle, app_password)
+        if not tok:
+            return zero
+        api = ("https://bsky.social/xrpc/app.bsky.feed.searchPosts?limit=25&q="
+               + urllib.parse.quote(link, safe=""))
+        req = urllib.request.Request(api, headers={
+            "Authorization": "Bearer " + tok, "User-Agent": _FETCH_UA, "Accept": "application/json"})
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+        tgt = _norm_url(link)
+        likes = reposts = n = 0
+        for p in data.get("posts", []):
+            rec = p.get("record") or {}
+            text = rec.get("text") or ""
+            emb = ((rec.get("embed") or {}).get("external") or {}).get("uri") or ""
+            if not (link in text or (emb and _norm_url(emb) == tgt)):
+                continue
+            likes += int(p.get("likeCount") or 0)
+            reposts += int(p.get("repostCount") or 0)
+            n += 1
+        return {"score": likes + reposts, "likes": likes, "reposts": reposts, "posts": n}
+    except Exception as e:
+        print(f"[recommender] bluesky engagement failed: {e}", flush=True)
+        return zero
 
 
 def discussions_payload(link, opts):
@@ -1323,6 +1380,68 @@ def discussions_payload(link, opts):
         link, opts.get("bluesky_handle", ""), opts.get("bluesky_app_password", ""))
     items.sort(key=lambda d: (d.get("comments", 0) + d.get("points", 0)), reverse=True)
     return {"items": items}
+
+
+# ───────────────────────────── featured ──────────────────────────────
+# Pick the home-carousel "featured" articles by blending recency + content richness with a
+# Bluesky engagement boost (Bluesky-only, by request — it covers design/cooking/etc. far better
+# than Hacker News). Computed in the background refresh and cached, since scoring fans out one
+# searchPosts call per candidate.
+
+FEATURED_CANDIDATES = 24   # newest articles-with-image to score per refresh (caps Bluesky calls)
+FEATURED_COUNT = 15        # how many featured items to serve
+
+
+def compute_featured(articles, opts):
+    """Blend recency + richness + Bluesky engagement → ordered featured list. Engagement nudges
+    the order toward what's being shared; recency keeps quiet-but-fresh articles in the mix.
+    Best-effort: no creds or all-zero engagement just falls back to recency/richness. Never raises."""
+    handle = opts.get("bluesky_handle", "")
+    app_pw = opts.get("bluesky_app_password", "")
+    cands = [a for a in articles if a.get("imageUrl") and a.get("publishedAt")]
+    cands.sort(key=lambda a: a["publishedAt"], reverse=True)
+    cands = cands[:FEATURED_CANDIDATES]
+    if not cands:
+        return []
+    eng = {a["link"]: {"score": 0, "likes": 0, "reposts": 0, "posts": 0} for a in cands}
+    if handle and app_pw:
+        try:
+            _bluesky_token(handle, app_pw)  # warm the shared token before fanning out
+        except Exception:
+            pass
+        from concurrent.futures import ThreadPoolExecutor
+        with ThreadPoolExecutor(max_workers=6) as ex:
+            futs = {ex.submit(bluesky_engagement, a["link"], handle, app_pw): a["link"] for a in cands}
+            for f in futs:
+                try:
+                    eng[futs[f]] = f.result(timeout=15)
+                except Exception:
+                    pass
+    newest = cands[0]["publishedAt"]
+    oldest = cands[-1]["publishedAt"]
+    span = max(1, newest - oldest)
+    scored = []
+    for a in cands:
+        recency = (a["publishedAt"] - oldest) / span             # 0..1, newer = higher
+        richness = min(1.0, len(a.get("text") or "") / 1200.0)    # 0..1
+        e = eng.get(a["link"]) or {"score": 0, "likes": 0, "reposts": 0, "posts": 0}
+        boost = math.log1p(e["score"]) * 0.6                      # diminishing; blends, never dominates
+        scored.append((recency + 0.3 * richness + boost, a, e))
+    scored.sort(key=lambda t: t[0], reverse=True)
+    out = []
+    for _, a, e in scored[:FEATURED_COUNT]:
+        out.append({
+            "title": a.get("title"),
+            "link": a.get("link"),
+            "source": a.get("source", ""),
+            "feedTitle": a.get("feedTitle", ""),
+            "imageUrl": a.get("imageUrl"),
+            "publishedAt": a.get("publishedAt"),
+            "author": a.get("author"),
+            "genre": a.get("genre", ""),
+            "engagement": e,
+        })
+    return out
 
 
 def make_handler(indexer, opts):
@@ -1394,6 +1513,12 @@ def make_handler(indexer, opts):
                     # if configured). Independent of the corpus.
                     link = (qs.get("link") or [None])[0]
                     self._send_json(discussions_payload(link, opts))
+                    return
+
+                if path == "/featured":
+                    # Background-computed home-carousel picks (recency + richness blended with
+                    # Bluesky engagement). Cached on the indexer; recomputed each refresh.
+                    self._send_json({"items": indexer.featured})
                     return
 
                 self._send_json({"error": "not found", "path": path}, status=404)
