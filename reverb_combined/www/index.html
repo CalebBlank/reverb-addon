@@ -5752,6 +5752,7 @@
                 grid.appendChild(loadingEl);
 
                 loadAllFeedsIndividual(myId);
+                _fetchServerFeatured();
                 if (viewMode === "masonry") {
                     const g = document.getElementById("all-feeds-grid");
                     if (g) requestAnimationFrame(() => buildMasonry(g));
@@ -5763,6 +5764,8 @@
             const FEATURED_WINDOW_MS = 72 * 60 * 60 * 1000;
             // Pool: feed url → array of scored candidates from the last 24h
             const _featuredPool = new Map();
+            // Server-side engagement-ranked featured order (recs/featured); null until fetched.
+            let _serverFeatured = null;
 
             function _scoreFeaturedItem(item, position) {
                 let score = 0;
@@ -5789,31 +5792,80 @@
                 return score;
             }
 
+            // Normalize a link for matching server featured links against locally-loaded items
+            // (host without www + path, trailing slash dropped). Mirrors the recommender's _norm_url.
+            function _normLink(u) {
+                if (!u) return "";
+                try {
+                    const x = new URL(u);
+                    return (x.hostname.replace(/^www\./, "") + x.pathname)
+                        .replace(/\/+$/, "")
+                        .toLowerCase();
+                } catch (e) {
+                    return String(u).trim().toLowerCase();
+                }
+            }
+
+            // Fetch the recommender's engagement-ranked featured order, then re-pick the carousel.
+            // Best-effort: any failure leaves _serverFeatured = [] so the local heuristic is used.
+            function _fetchServerFeatured() {
+                fetch("recs/featured")
+                    .then((r) => (r.ok ? r.json() : null))
+                    .then((d) => {
+                        _serverFeatured = Array.isArray(d && d.items) ? d.items : [];
+                        _rebuildFeatured();
+                    })
+                    .catch(() => {
+                        _serverFeatured = [];
+                    });
+            }
+
             function _rebuildFeatured() {
                 if (!document.getElementById("featured-section")) return;
                 const now = Date.now();
                 const cutoff = now - FEATURED_WINDOW_MS;
 
-                // Flatten all per-feed candidates, filter to 24h window,
-                // sort by score desc, pick top 5 with at most one per source
-                const seenSources = new Set();
-                const top8 = [..._featuredPool.values()]
-                    .flat()
-                    .filter((c) => c.ts >= cutoff && getImage(c.item))
-                    .sort((a, b) => b.score - a.score)
-                    .filter((c) => {
-                        if (seenSources.has(c.feed.url)) return false;
-                        seenSources.add(c.feed.url);
-                        return true;
-                    })
-                    .slice(0, 8);
+                // Prefer the server's engagement-ranked order (recs/featured): index pooled
+                // candidates by link, then take the server order, dropping any not currently loaded
+                // (the home view holds the whole reading-list, so matches are ~complete). Fall back
+                // to the local image+recency heuristic when the server list is missing or matches
+                // too few.
+                let top8 = null;
+                if (_serverFeatured && _serverFeatured.length) {
+                    const byLink = new Map();
+                    for (const c of [..._featuredPool.values()].flat()) {
+                        const l = getLink(c.item);
+                        if (l) {
+                            const k = _normLink(l);
+                            if (!byLink.has(k)) byLink.set(k, c);
+                        }
+                    }
+                    const matched = _serverFeatured
+                        .map((s) => byLink.get(_normLink(s.link)))
+                        .filter(Boolean)
+                        .slice(0, 8);
+                    if (matched.length >= 3) top8 = matched;
+                }
+                if (!top8) {
+                    const seenSources = new Set();
+                    top8 = [..._featuredPool.values()]
+                        .flat()
+                        .filter((c) => c.ts >= cutoff && getImage(c.item))
+                        .sort((a, b) => b.score - a.score)
+                        .filter((c) => {
+                            if (seenSources.has(c.feed.url)) return false;
+                            seenSources.add(c.feed.url);
+                            return true;
+                        })
+                        .slice(0, 8);
+                }
 
                 const changed =
                     top8.length !== featuredArticles.length ||
                     top8.some(
                         (c, i) =>
                             !featuredArticles[i] ||
-                            c.feed.url !== featuredArticles[i].feed.url,
+                            getLink(c.item) !== getLink(featuredArticles[i].item),
                     );
                 if (!changed) return;
 
@@ -5867,6 +5919,7 @@
             function resetFeatured() {
                 stopCarouselTimer();
                 _featuredPool.clear();
+                _serverFeatured = null;
                 featuredArticles = [];
                 featuredIndex = 0;
                 _featuredAutoSelected = false;
