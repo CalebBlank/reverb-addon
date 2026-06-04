@@ -1,5 +1,5 @@
 name: Reverb Recommender
-version: "0.1.9"
+version: "0.1.10"
 slug: reverb_recommender
 description: >-
   Related-articles recommender for the Reverb RSS reader. Builds a TF-IDF index
@@ -31,6 +31,11 @@ options:
   # with a built-in curated default list, so leaving this blank still pulls from
   # the defaults. Articles from these feeds can be recommended and open in-reader.
   external_feeds: ""
+  # Optional Bluesky read-only creds for the article "Discussions" feature (find
+  # posts that linked an article). Use a Bluesky APP PASSWORD (Settings -> App
+  # Passwords), NOT your account password. Leave blank for Hacker-News-only.
+  bluesky_handle: ""
+  bluesky_app_password: ""
 schema:
   freshrss_upstream: str
   username: str
@@ -39,3 +44,5 @@ schema:
   corpus_size: int(10,)
   k_default: int(1,50)
   external_feeds: str?
+  bluesky_handle: str?
+  bluesky_app_password: password?

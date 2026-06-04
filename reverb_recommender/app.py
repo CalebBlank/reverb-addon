@@ -40,6 +40,10 @@ DEFAULTS = {
     "corpus_size": 300,
     "k_default": 8,
     "external_feeds": "",
+    # Optional Bluesky read creds for the /discussions endpoint (app password, NOT the
+    # account password). Blank = HN-only discussions. Handle e.g. "name.bsky.social".
+    "bluesky_handle": "",
+    "bluesky_app_password": "",
 }
 
 # How many of the newest items to keep PER external feed, so the combined corpus
@@ -1203,6 +1207,124 @@ class Indexer:
             time.sleep(interval)
 
 
+# ───────────────────────────── discussions ──────────────────────────────
+# "Where was this article discussed?" — posts/threads that linked the article URL.
+# Hacker News (Algolia, no auth) is always queried; Bluesky is queried when
+# bluesky_handle + bluesky_app_password are configured. (X/Twitter has no free
+# URL search; Reddit can be added later, best-effort.)
+
+def _norm_url(u):
+    """Normalize a URL for matching: drop scheme, www, query, trailing slash."""
+    try:
+        p = urllib.parse.urlparse(u)
+        host = (p.netloc or "").lower()
+        if host.startswith("www."):
+            host = host[4:]
+        return host + (p.path or "").rstrip("/")
+    except Exception:
+        return (u or "").strip().lower()
+
+
+def fetch_hn_discussions(url, timeout=8):
+    """Hacker News submissions whose story URL matches `url` (Algolia search API)."""
+    try:
+        q = urllib.parse.quote(url, safe="")
+        api = ("https://hn.algolia.com/api/v1/search"
+               "?restrictSearchableAttributes=url&hitsPerPage=10&query=" + q)
+        req = urllib.request.Request(
+            api, headers={"User-Agent": _FETCH_UA, "Accept": "application/json"})
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+        target = _norm_url(url)
+        out = []
+        for h in data.get("hits", []):
+            if h.get("url") and _norm_url(h["url"]) != target:
+                continue  # Algolia is fuzzy; keep only true URL matches
+            oid = h.get("objectID")
+            if not oid:
+                continue
+            out.append({
+                "platform": "hackernews",
+                "author": h.get("author") or "",
+                "text": h.get("title") or "",
+                "url": "https://news.ycombinator.com/item?id=" + str(oid),
+                "points": int(h.get("points") or 0),
+                "comments": int(h.get("num_comments") or 0),
+                "createdAt": h.get("created_at") or "",
+            })
+        return out
+    except Exception as e:
+        print(f"[recommender] HN discussions failed: {e}", flush=True)
+        return []
+
+
+_bsky_session = {"token": None, "ts": 0.0}
+
+
+def _bluesky_token(handle, app_password):
+    """Cached Bluesky access JWT via createSession (app password, not the real password)."""
+    now = time.time()
+    if _bsky_session["token"] and now - _bsky_session["ts"] < 90 * 60:
+        return _bsky_session["token"]
+    body = json.dumps({"identifier": handle, "password": app_password}).encode("utf-8")
+    req = urllib.request.Request(
+        "https://bsky.social/xrpc/com.atproto.server.createSession",
+        data=body, method="POST",
+        headers={"Content-Type": "application/json", "User-Agent": _FETCH_UA})
+    with urllib.request.urlopen(req, timeout=8) as resp:
+        j = json.loads(resp.read().decode("utf-8"))
+    _bsky_session["token"] = j.get("accessJwt")
+    _bsky_session["ts"] = now
+    return _bsky_session["token"]
+
+
+def fetch_bluesky_discussions(url, handle, app_password, timeout=8):
+    """Bluesky posts mentioning the article URL (searchPosts; needs an auth token)."""
+    if not handle or not app_password:
+        return []
+    try:
+        tok = _bluesky_token(handle, app_password)
+        if not tok:
+            return []
+        q = urllib.parse.quote(url, safe="")
+        api = "https://bsky.social/xrpc/app.bsky.feed.searchPosts?limit=15&q=" + q
+        req = urllib.request.Request(api, headers={
+            "Authorization": "Bearer " + tok,
+            "User-Agent": _FETCH_UA, "Accept": "application/json"})
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+        out = []
+        for p in data.get("posts", []):
+            rec = p.get("record") or {}
+            author = p.get("author") or {}
+            h = author.get("handle") or ""
+            rkey = (p.get("uri") or "").rsplit("/", 1)[-1]
+            out.append({
+                "platform": "bluesky",
+                "author": author.get("displayName") or h,
+                "text": rec.get("text") or "",
+                "url": ("https://bsky.app/profile/%s/post/%s" % (h, rkey)) if (h and rkey) else "",
+                "points": int(p.get("likeCount") or 0),
+                "comments": int(p.get("replyCount") or 0),
+                "createdAt": rec.get("createdAt") or "",
+            })
+        return out
+    except Exception as e:
+        print(f"[recommender] Bluesky discussions failed: {e}", flush=True)
+        return []
+
+
+def discussions_payload(link, opts):
+    """HN (always) + Bluesky (if configured) posts that linked `link`; best engagement first."""
+    if not link:
+        return {"items": []}
+    items = fetch_hn_discussions(link)
+    items += fetch_bluesky_discussions(
+        link, opts.get("bluesky_handle", ""), opts.get("bluesky_app_password", ""))
+    items.sort(key=lambda d: (d.get("comments", 0) + d.get("points", 0)), reverse=True)
+    return {"items": items}
+
+
 def make_handler(indexer, opts):
     class Handler(BaseHTTPRequestHandler):
         protocol_version = "HTTP/1.1"
@@ -1265,6 +1387,13 @@ def make_handler(indexer, opts):
                     # The curated source directory for the app's Discover page.
                     # Static (from CATALOG) so it answers even before the corpus builds.
                     self._send_json(catalog_payload())
+                    return
+
+                if path == "/discussions":
+                    # Social/forum posts that linked the article URL (HN always; Bluesky
+                    # if configured). Independent of the corpus.
+                    link = (qs.get("link") or [None])[0]
+                    self._send_json(discussions_payload(link, opts))
                     return
 
                 self._send_json({"error": "not found", "path": path}, status=404)
