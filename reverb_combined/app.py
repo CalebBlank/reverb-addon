@@ -1425,8 +1425,10 @@ def compute_featured(articles, opts):
         recency = (a["publishedAt"] - oldest) / span             # 0..1, newer = higher
         richness = min(1.0, len(a.get("text") or "") / 1200.0)    # 0..1
         e = eng.get(a["link"]) or {"score": 0, "likes": 0, "reposts": 0, "posts": 0}
-        boost = math.log1p(e["score"]) * 0.6                      # diminishing; blends, never dominates
-        scored.append((recency + 0.3 * richness + boost, a, e))
+        # Engagement leads; recency is only a mild tiebreaker. Candidates are already the newest 24,
+        # so a low recency weight keeps featured from simply echoing the top of the feed.
+        boost = math.log1p(e["score"]) * 0.8
+        scored.append((0.4 * recency + 0.3 * richness + boost, a, e))
     scored.sort(key=lambda t: t[0], reverse=True)
     out = []
     for _, a, e in scored[:FEATURED_COUNT]:
