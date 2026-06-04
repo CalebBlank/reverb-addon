@@ -1,0 +1,51 @@
+name: Reverb
+version: "1.0.0"
+slug: reverb
+description: >-
+  Reverb web reader + recommender in one add-on. Serves the web RSS reader over
+  Home Assistant Ingress, proxies the FreshRSS Google Reader API same-origin, and
+  runs the related/catalog/discussions recommender (also reachable on :8100 by the
+  Reverb Android app). Replaces the separate "Reverb Reader" + "Reverb Recommender".
+url: https://github.com/CalebBlank/reverb-addon
+arch:
+  - aarch64
+  - amd64
+# We provide our own entrypoint (run.sh: starts the recommender, then nginx).
+init: false
+# Ingress: the web reader shows up as a sidebar tile, gated by HA's own auth.
+ingress: true
+ingress_port: 8099
+panel_icon: mdi:rss
+panel_title: Reverb
+# The recommender's HTTP API, exposed directly so the Reverb ANDROID app can reach it
+# at http://<HA-IP>:8100. The web reader uses it same-origin via nginx /recs/ (localhost).
+ports:
+  "8100/tcp": 8100
+ports_description:
+  "8100/tcp": Recommender API for the Reverb Android app (GET /related, /catalog, /discussions, /health)
+# One shared config for both halves.
+#   freshrss_upstream: the FreshRSS add-on base URL (SAME host:port as Reverb, WITHOUT
+#     /api/greader.php), e.g. http://192.168.1.50:7077 — used by both the /api/ proxy and
+#     the recommender's server-side fetch.
+#   username / api_password: FreshRSS API creds (the recommender logs in server-side).
+#   bluesky_*: optional app-password creds for the article "Discussions" feature (HN-only if blank).
+options:
+  freshrss_upstream: ""
+  username: ""
+  api_password: ""
+  refresh_minutes: 20
+  corpus_size: 1000
+  k_default: 8
+  external_feeds: ""
+  bluesky_handle: ""
+  bluesky_app_password: ""
+schema:
+  freshrss_upstream: str
+  username: str
+  api_password: password
+  refresh_minutes: int(1,)
+  corpus_size: int(10,)
+  k_default: int(1,50)
+  external_feeds: str?
+  bluesky_handle: str?
+  bluesky_app_password: password?

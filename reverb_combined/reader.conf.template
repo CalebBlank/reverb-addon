@@ -1,0 +1,36 @@
+server {
+    listen 8099;
+    server_name _;
+
+    root /usr/share/nginx/html;
+    index index.html;
+
+    # Same-origin proxy to the recommender service. A browser request to
+    # recs/related?... → this add-on → recommender /related?... (no CORS,
+    # works under HA ingress). When the upstream is unset it points at a dead
+    # address so this just fails fast and the reader shows no recommendations.
+    location /recs/ {
+        proxy_pass ${RECOMMENDER_UPSTREAM}/;
+        proxy_http_version 1.1;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_read_timeout 15s;
+    }
+
+    # The self-contained web reader (single index.html).
+    location / {
+        try_files $uri $uri/ /index.html;
+    }
+
+    # Same-origin proxy to the FreshRSS Google Reader API. Because the browser
+    # talks only to this add-on (one origin, behind HA auth), there is no CORS —
+    # ClientLogin and all reader/api/0 calls just work.
+    location /api/ {
+        proxy_pass ${FRESHRSS_UPSTREAM}/api/;
+        proxy_http_version 1.1;
+        # No "Host $host" override: we proxy to a different backend, so let nginx
+        # send the upstream's own host (what FreshRSS expects).
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_read_timeout 30s;
+    }
+}
