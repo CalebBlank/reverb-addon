@@ -1647,7 +1647,9 @@
                 position: relative;
                 height: 440px;
                 flex-shrink: 0;
-                padding: 24px 0;
+                /* Horizontal inset lives here (not on the scrolling track) so the track's box —
+                   and thus its overflow-clip edge — equals the feed grid's content width. */
+                padding: 24px clamp(16px, 12%, 80px);
                 margin-top: 80px;
                 margin-bottom: 80px;
                 overflow-x: clip;
@@ -1966,8 +1968,8 @@
                 height: auto;
                 position: static;
                 scroll-snap-type: x mandatory;
-                scroll-padding-left: clamp(16px, 12%, 80px);
-                padding: 4px clamp(16px, 12%, 80px) 6px;
+                scroll-padding-left: 0;
+                padding: 4px 0 6px;
                 scrollbar-width: none;
             }
             #featured-track::-webkit-scrollbar { display: none; }
@@ -1990,6 +1992,8 @@
                 box-shadow: 0 6px 22px rgba(0, 0, 0, 0.18);
                 transition: flex-basis 0.34s var(--spring);
             }
+            /* While the pane/window is actively resizing, snap widths instead of animating them. */
+            #featured-track.resizing .featured-card { transition: none; }
             .featured-card .thumb-frame {
                 flex: 1 1 100%;
                 width: 100%;
@@ -2004,7 +2008,7 @@
             }
             .featured-arrow { display: none; }
             #featured-caption {
-                margin: 16px clamp(16px, 12%, 80px) 0;
+                margin: 16px 0 0;
                 position: relative;
                 z-index: 1;
             }
@@ -6088,26 +6092,24 @@
                 });
                 featuredIndex = best;
 
-                // M3 multi-browse keylines: from the focused card rightward — large frame(s), one
-                // medium, then a small sliver (≈ the rounded corner). The large count grows with the
-                // carousel's width, and every frame steps down in width to the right. All frames share
-                // one height (derived from the large width) so the carousel never collapses to pills.
+                // M3 hero keylines: ONE dominant focused frame + a medium peek + a corner sliver,
+                // sized to exactly fill the track — so the carousel spans the same width as the feed
+                // grid below (both use the same clamp() side inset). The focused frame is much wider
+                // than the rest (height grows only a little); as you scroll, the newly focused frame
+                // expands and the previous one contracts, animated by the flex-basis transition.
                 const cs = getComputedStyle(track);
                 const avail = track.clientWidth - (parseFloat(cs.paddingLeft) || 0) - (parseFloat(cs.paddingRight) || 0);
                 const gap = parseFloat(cs.columnGap || cs.gap) || 16;
                 const SMALL = 56;   // ≈ 2× the 28px corner radius — just the rounded corner shows
-                const PREF = 300;   // preferred large-frame width
-                const largeCount = Math.max(1, Math.floor((avail - SMALL - 80) / (PREF + gap)));
-                // Solve largeCount·L + (medium = 0.6·L) + SMALL + gaps = avail for the large width L,
-                // so large > medium > small always holds.
-                let largeW = (avail - SMALL - gap * (largeCount + 1)) / (largeCount + 0.6);
-                if (largeW < SMALL + 8) largeW = SMALL + 8;
-                const MEDIUM = Math.max(SMALL + 4, Math.round(largeW * 0.6));
-                largeW = Math.round(largeW);
-                const cardH = Math.round(Math.min(480, Math.max(170, largeW * 1.2)));
+                // Focused + medium share the width left after the trailing sliver + the two gaps.
+                const rem = Math.max(SMALL * 2, avail - SMALL - gap * 2);
+                const largeW = Math.min(Math.round(rem * 0.76), rem - 40);
+                const MEDIUM = rem - largeW;
+                // Wider, not much taller: a landscape focused frame, height clamped so it never balloons.
+                const cardH = Math.round(Math.min(340, Math.max(220, largeW * 0.56)));
                 cards.forEach((c, i) => {
                     const off = i - best;
-                    const w = off < largeCount ? largeW : off === largeCount ? MEDIUM : SMALL;
+                    const w = off <= 0 ? largeW : off === 1 ? MEDIUM : SMALL;
                     c.style.flexBasis = w + "px";
                     c.style.height = cardH + "px";
                     c.classList.toggle("focused", i === best);
@@ -7665,10 +7667,22 @@
                 [detailPanel],
             );
 
-            // ── Reposition carousel on middle panel resize ──
+            // ── Recompute carousel keyline widths + reposition on middle-panel / window resize ──
+            let _carouselResizeTimer = null;
             new ResizeObserver(() => {
-                if (document.getElementById("featured-track"))
-                    positionCarousel();
+                const track = document.getElementById("featured-track");
+                if (track) {
+                    // Recompute the keyline widths for the new width every frame, but snap them
+                    // (no flex-basis animation) while the size is actively changing so they don't
+                    // rubber-band; re-snap the focused frame and restore the transition once it settles.
+                    track.classList.add("resizing");
+                    _syncFeaturedFromScroll();
+                    clearTimeout(_carouselResizeTimer);
+                    _carouselResizeTimer = setTimeout(() => {
+                        track.classList.remove("resizing");
+                        positionCarousel();
+                    }, 180);
+                }
                 if (viewMode === "masonry")
                     document
                         .querySelectorAll(".article-grid.masonry-view")
