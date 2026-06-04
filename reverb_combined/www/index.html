@@ -213,7 +213,9 @@
                 flex-shrink: 0;
             }
             #left.collapsed #sidebar-top {
-                padding: 24px 4px 4px;
+                /* Bottom padding is the PERSISTENT gap below the expand button — it stays put when
+                   the feed list scrolls underneath (unlike the home margin, which scrolls away). */
+                padding: 24px 4px 18px;
                 justify-content: center;
             }
             #sidebar-collapse-btn {
@@ -681,7 +683,7 @@
             /* Tighten the gap above Home (to the collapse button) and open up Home→Discover.
                (#left-scroll is block flow, so adjacent vertical margins collapse — set them on the
                element below the gap we want to size.) */
-            #left.collapsed #home-link { margin-top: 4px; }
+            #left.collapsed #home-link { margin-top: 6px; }
             #left.collapsed #discover-link { margin-top: 24px; }
             #left.collapsed .sidebar-text,
             #left.collapsed .feed-item span {
@@ -1658,7 +1660,7 @@
                    and thus its overflow-clip edge — equals the feed grid's content width. */
                 padding: 24px clamp(16px, 12%, 80px);
                 margin-top: 80px;
-                margin-bottom: 36px;
+                margin-bottom: 16px;
                 overflow-x: clip;
                 overflow-y: visible;
             }
@@ -6107,7 +6109,7 @@
                 const weightFor = (d) => (d === 0 ? 4.5 : d === 1 ? 2 : 0.7);
                 let totalW = 0;
                 cards.forEach((_, i) => { totalW += weightFor(Math.abs(i - featuredIndex)); });
-                const cardH = Math.round(Math.min(300, Math.max(190, avail * 0.3)));
+                const cardH = Math.round(Math.min(330, Math.max(220, avail * 0.34)));
                 cards.forEach((c, i) => {
                     const d = Math.abs(i - featuredIndex);
                     c.style.flexBasis = Math.round((weightFor(d) / totalW) * cardArea) + "px";
