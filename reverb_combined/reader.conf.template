@@ -16,8 +16,10 @@ server {
         proxy_read_timeout 15s;
     }
 
-    # The self-contained web reader (single index.html).
+    # The self-contained web reader (single index.html). no-cache => the browser revalidates
+    # each load (304 when unchanged), so an add-on update is seen without a manual hard refresh.
     location / {
+        add_header Cache-Control "no-cache";
         try_files $uri $uri/ /index.html;
     }
 
