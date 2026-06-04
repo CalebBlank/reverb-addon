@@ -69,7 +69,7 @@
                 /* default: no adjustment; only adjusted when a real dominant color is active */
                 --article-accent-adj: var(--article-accent);
                 /* scrim over the open-article blurred backdrop (light theme) */
-                --article-bg-scrim: rgba(255, 255, 255, 0.62);
+                --article-bg-scrim: rgba(255, 255, 255, 0.86);
                 /* extra, lighter wash on the reader column for body legibility
                    (added on top of the global scrim, so it stays subtle) */
                 --article-reader-wash: rgba(255, 255, 255, 0.28);
@@ -94,7 +94,7 @@
                 --bg-main-glass: rgba(30, 30, 30, 0.75);
                 --btn-bg: rgba(0, 0, 0, 0.11);
                 /* scrim over the open-article blurred backdrop (dark theme) */
-                --article-bg-scrim: rgba(18, 19, 24, 0.66);
+                --article-bg-scrim: rgba(18, 19, 24, 0.84);
                 --article-reader-wash: rgba(18, 19, 24, 0.34);
             }
 
@@ -177,7 +177,9 @@
                 content: "";
                 position: fixed;
                 inset: 0;
-                background: var(--feed-tint, transparent);
+                /* No full-page colour wash (the Android app has none) — the backdrop is the
+                   blurred top-band image only (#featured-bg / #article-bg). */
+                background: transparent;
                 pointer-events: none;
                 z-index: 0;
                 transition: background 0.5s ease;
@@ -1694,13 +1696,17 @@
                 background-size: cover;
                 background-position: top center;
                 background-blend-mode: multiply;
-                filter: blur(34px) brightness(0.8) saturate(1.6);
+                filter: blur(34px) brightness(0.85) saturate(1.15);
                 transform: scale(1.06);
                 transform-origin: top center;
                 z-index: 0;
                 opacity: 0;
                 transition: opacity 0.3s ease;
                 pointer-events: none;
+                /* Top band only, like the Android tablet: fade the blurred hero out below the
+                   fold so the lower page reads as the normal background (not a full-page wash). */
+                -webkit-mask-image: linear-gradient(to bottom, black 0%, black 20%, transparent 62%);
+                mask-image: linear-gradient(to bottom, black 0%, black 20%, transparent 62%);
             }
             #article-bg::after {
                 content: "";
@@ -1709,6 +1715,9 @@
                 /* Soft scrim so reader text stays legible over the blur. */
                 background: var(--article-bg-scrim, rgba(255, 255, 255, 0.62));
             }
+            /* One backdrop at a time (like the Android app): when an article is open, hide the
+               carousel's #featured-bg so only the article backdrop shows. */
+            body.article-open #featured-bg { opacity: 0 !important; }
             /* The shared article backdrop is a wide-mode feature: in narrow
                mode the reader is a fixed overlay and the feed is hidden, so a
                full-viewport backdrop behind "both panes" has no meaning. */
@@ -1722,19 +1731,10 @@
                legible via the source-tinted scrim baked into #article-bg and a
                lighter readability wash on #right-scroll. */
             @media (min-width: 1400px) {
-                body.article-open #right {
-                    background:
-                        radial-gradient(
-                            ellipse 80% 50% at top left,
-                            var(--panel-complement-glow, transparent) 0%,
-                            transparent 100%
-                        );
-                    box-shadow: none;
-                    border-radius: 0;
-                }
+                /* Keep the reader a SOLID floating panel when an article opens — the panels
+                   don't dissolve into the backdrop (matches the tablet app's solid panes). */
                 body.article-open #right-scroll {
-                    background: var(--article-reader-wash, rgba(255, 255, 255, 0.28));
-                    border-radius: 0 8px 8px 0;
+                    background: var(--bg-main);
                 }
             }
 
