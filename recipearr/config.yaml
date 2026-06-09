@@ -1,5 +1,5 @@
 name: Recipearr
-version: "1.0.2"
+version: "1.0.3"
 slug: recipearr
 description: >-
   An "*arr" for recipes: watches recipe RSS/Atom feeds, filters by keyword,
