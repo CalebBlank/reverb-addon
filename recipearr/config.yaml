@@ -1,0 +1,17 @@
+name: Recipearr
+version: "1.0.0"
+slug: recipearr
+description: >-
+  An "*arr" for recipes: watches recipe RSS/Atom feeds, filters by keyword,
+  enriches, and imports into Tandoor. Configure Tandoor + sources in the web UI.
+url: https://github.com/CalebBlank/reverb-addon
+arch:
+  - aarch64
+# Single static binary in a distroless image with its own entrypoint — no s6 init.
+init: false
+# Web UI on the host: open http://<yellow-ip>:8585. (The UI uses absolute /api paths,
+# so it isn't ingress-ready yet; that's a later enhancement.)
+ports:
+  "8585/tcp": 8585
+ports_description:
+  "8585/tcp": Recipearr web UI
