@@ -1,5 +1,5 @@
 name: Recipearr
-version: "1.0.3"
+version: "1.1.0"
 slug: recipearr
 description: >-
   An "*arr" for recipes: watches recipe RSS/Atom feeds, filters by keyword,
@@ -9,11 +9,15 @@ arch:
   - aarch64
 # Single static binary in a distroless image with its own entrypoint — no s6 init.
 init: false
-# Web UI on the host: open http://<yellow-ip>:8585. (The UI uses absolute /api paths,
-# so it isn't ingress-ready yet; that's a later enhancement.)
+# Ingress: shows Recipearr as a sidebar tile behind HA's auth + proxy, so it works on the LAN,
+# remotely (Nabu Casa), and in the mobile app — no exposed port needed. The UI now uses relative
+# /api paths, so it rides the ingress base path correctly.
+ingress: true
+ingress_port: 8585
+panel_icon: mdi:silverware-fork-knife
+panel_title: Recipearr
+# Also keep the raw port available for direct LAN access / bookmarks (optional).
 ports:
   "8585/tcp": 8585
 ports_description:
-  "8585/tcp": Recipearr web UI
-# Adds the "Open Web UI" button on the add-on page (opens the mapped host port).
-webui: "http://[HOST]:[PORT:8585]"
+  "8585/tcp": Recipearr web UI (direct LAN access; ingress is preferred)
