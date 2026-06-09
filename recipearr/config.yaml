@@ -1,5 +1,5 @@
 name: Recipearr
-version: "1.0.1"
+version: "1.0.2"
 slug: recipearr
 description: >-
   An "*arr" for recipes: watches recipe RSS/Atom feeds, filters by keyword,
@@ -15,3 +15,5 @@ ports:
   "8585/tcp": 8585
 ports_description:
   "8585/tcp": Recipearr web UI
+# Adds the "Open Web UI" button on the add-on page (opens the mapped host port).
+webui: "http://[HOST]:[PORT:8585]"
