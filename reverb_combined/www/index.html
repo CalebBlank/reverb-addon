@@ -917,6 +917,10 @@
                 flex-direction: column;
                 gap: 14px;
                 opacity: 0;
+                /* While collapsed, the body (opacity:0 → its own stacking context) must NOT intercept
+                   taps — otherwise clicks land on it (and its stopPropagation'd controls) instead of
+                   opening the FAB. Only the open menu is interactive. */
+                pointer-events: none;
                 transition: opacity 0.16s;
             }
             #home-fab.open, #reader-fab.open {
@@ -928,7 +932,7 @@
                 cursor: default;
             }
             #home-fab.open .fab-icon, #reader-fab.open .fab-icon { opacity: 0; pointer-events: none; }
-            #home-fab.open .fab-body, #reader-fab.open .fab-body { opacity: 1; transition-delay: 0.08s; }
+            #home-fab.open .fab-body, #reader-fab.open .fab-body { opacity: 1; pointer-events: auto; transition-delay: 0.08s; }
             /* Reader display FAB: floats over the article pane, shown only while an article is open. */
             #reader-fab { right: 28px; bottom: 28px; display: none; z-index: 60; }
             body.article-open #reader-fab { display: block; }
@@ -5552,10 +5556,15 @@
                     <div id="all-feeds-grid" class="article-grid"></div>
                 `;
                 mountRefreshButton(() => {
+                    // Incremental refresh: keep the existing cards AND the featured
+                    // carousel. loadAllFeeds reconciles each feed against the live DOM,
+                    // so unchanged feeds stay put (no re-animate, scroll preserved) and
+                    // only feeds with new/changed items re-render — instead of wiping the
+                    // whole grid. We intentionally DON'T call resetFeatured() here: the
+                    // per-feed offerToFeatured → _rebuildFeatured already diffs the
+                    // featured set by link and only rebuilds the carousel when it truly
+                    // changes (preserving featuredIndex), so the hero no longer flashes.
                     _lazyTeardown();
-                    const grid = document.getElementById("all-feeds-grid");
-                    if (grid) grid.innerHTML = "";
-                    resetFeatured();
                     loadAllFeeds();
                 });
                 mountCardSlider();
@@ -5758,19 +5767,30 @@
             function loadAllFeedsIndividual(myId) {
                 const allFeeds = FEEDS.flatMap((cat) => cat.items);
 
-                // Render cached articles immediately (stale), then sort once all cached feeds are appended
-                allFeeds.forEach((feed) => {
-                    if (
-                        loadAllFeedsId !== myId ||
-                        !document.getElementById("all-feeds-grid")
-                    )
-                        return;
-                    const cachedXml = getFeedPageCache(feed.url);
-                    if (cachedXml) {
-                        renderFeedItemsToGrid(feed, cachedXml, false);
-                        offerToFeatured(feed, cachedXml);
-                    }
-                });
+                // On a refresh the grid is already populated with live cards; skip the
+                // stale-cache re-render (it would duplicate them) and let the fresh-fetch
+                // pass below reconcile each feed against the live DOM — so unchanged feeds
+                // keep their existing cards (and scroll position). On first paint the grid
+                // is empty, so render the cached articles immediately (stale) for speed.
+                const gridNow = document.getElementById("all-feeds-grid");
+                const alreadyPopulated = !!(
+                    gridNow && gridNow.querySelector(".article-item")
+                );
+
+                if (!alreadyPopulated) {
+                    allFeeds.forEach((feed) => {
+                        if (
+                            loadAllFeedsId !== myId ||
+                            !document.getElementById("all-feeds-grid")
+                        )
+                            return;
+                        const cachedXml = getFeedPageCache(feed.url);
+                        if (cachedXml) {
+                            renderFeedItemsToGrid(feed, cachedXml, false);
+                            offerToFeatured(feed, cachedXml);
+                        }
+                    });
+                }
                 removeLoadingIndicator();
                 const gridAfterCache =
                     document.getElementById("all-feeds-grid");
