@@ -307,6 +307,47 @@
                 border-radius: 0 0 8px 0;
                 z-index: -1;
             }
+            /* ── Reader collapse ──────────────────────────────────────────────
+               Mirrors the #left.collapsed pattern: the pane shrinks to a rail
+               rather than to zero, so the expand button stays reachable. 630px
+               of reader becomes 44px, handing ~586px back to the feed grid. */
+            #reader-collapse-btn {
+                position: absolute;
+                top: 12px;
+                right: 12px;
+                z-index: 4;
+                width: 32px;
+                height: 32px;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                padding: 0;
+                cursor: pointer;
+                border: none;
+                border-radius: 999px;
+                background: var(--btn-bg);
+                color: inherit;
+                box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.3);
+                opacity: 0.55;
+                transition: opacity 0.18s ease, background 0.18s ease;
+            }
+            #reader-collapse-btn:hover { opacity: 1; }
+            /* Wide mode only. Below 1400px #right is a narrow-mode overlay (#right.narrow-open),
+               not a side pane, so there is no grid to hand width back to — scoping the whole
+               collapsed state here means a value persisted from a wide window can't leak into
+               the overlay layout. */
+            @media (min-width: 1400px) {
+                #right { transition: width 0.26s var(--spring); }
+                #right.collapsed { width: 44px; }
+                /* #right-scroll carries 80px of padding and would squash into the rail. */
+                #right.collapsed #right-scroll,
+                #right.collapsed #reader-fab,
+                #right.collapsed .handle { display: none; }
+                #right.collapsed #reader-collapse-btn { right: 6px; opacity: 1; }
+            }
+            @media (max-width: 1399px) {
+                #reader-collapse-btn { display: none; }
+            }
             #detail-toggle {
                 margin-left: auto;
                 flex-shrink: 0;
@@ -1127,6 +1168,54 @@
                 font-size: 15px;
             }
 
+            /* ── Discover: source preview ──
+               Reading a source's latest headlines without subscribing. The grid reuses
+               .article-grid so the cards are identical to the feed's. */
+            .dz-preview-head {
+                display: flex;
+                align-items: center;
+                gap: 12px;
+                padding: 8px 0 18px;
+            }
+            .dz-back {
+                display: inline-flex;
+                align-items: center;
+                gap: 4px;
+                padding: 6px 14px 6px 10px;
+                border: none;
+                border-radius: 999px;
+                cursor: pointer;
+                background: var(--btn-bg);
+                color: inherit;
+                font: inherit;
+                font-size: 14px;
+                box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.3);
+            }
+            .dz-back:hover { filter: brightness(1.06); }
+            .dz-preview-name {
+                font-size: 22px;
+                font-weight: 700;
+                margin-right: auto;
+                min-width: 0;
+                overflow: hidden;
+                text-overflow: ellipsis;
+                white-space: nowrap;
+            }
+            .dz-preview-head .dz-fav {
+                width: 24px;
+                height: 24px;
+                border-radius: 6px;
+                flex-shrink: 0;
+            }
+            /* .dz-add is width:100% for the catalog card, where it's a block button at the
+               bottom. In this header row that makes it eat the space and truncate the name. */
+            .dz-preview-head .dz-add {
+                flex: 0 0 auto;
+                width: auto;
+                padding: 8px 18px;
+            }
+            .dz-preview-status { padding: 28px 16px; }
+
             /* ── Feed list ── */
             .category {
                 padding: 10px 12px 4px;
@@ -1784,9 +1873,15 @@
                lighter readability wash on #right-scroll. */
             @media (min-width: 1400px) {
                 /* Keep the reader a SOLID floating panel when an article opens — the panels
-                   don't dissolve into the backdrop (matches the tablet app's solid panes). */
+                   don't dissolve into the backdrop (matches the tablet app's solid panes).
+                   #right carries the 8px radius but runs overflow:visible (it's the containing
+                   block for the floating reader FAB), so it cannot clip this child. Without a
+                   radius of its own, this opaque background paints square corners straight over
+                   the pane's rounded ones the moment an article opens. `inherit` keeps it locked
+                   to #right's radius instead of hard-coding a second copy of the value. */
                 body.article-open #right-scroll {
                     background: var(--bg-main);
+                    border-radius: inherit;
                 }
             }
 
@@ -2060,6 +2155,16 @@
                 width: 100%;
                 height: 100%;
                 border-radius: 28px;
+            }
+            /* The single card furthest from focus is a keyline sliver. At the small tier it computes
+               to roughly 68px wide, so a 28px radius leaves a flat span across the caps. 999px clamps
+               to half the computed width, giving a true capsule at any track size. Applied to the
+               inner frame and image too — those carry their own 28px and would square it off. */
+            .featured-card.pill,
+            .featured-card.pill .thumb-frame,
+            .featured-card.pill .thumb-frame .article-thumb,
+            .featured-card.pill .thumb-frame .article-thumb-placeholder {
+                border-radius: 999px;
             }
             .featured-arrow { display: none; }
             #featured-caption {
@@ -3160,6 +3265,12 @@
         <div id="right">
             <div class="handle" id="handle-right"></div>
             <div class="handle" id="handle-right-split"></div>
+            <!-- Collapse the reader so the feed grid gets its width back. Lives on #right
+                 itself (not in the feed header, which is re-rendered in two places) so the
+                 expand affordance survives the collapsed state. Mirrors #sidebar-collapse-btn. -->
+            <button id="reader-collapse-btn" title="Collapse reader" aria-label="Collapse reader">
+                <span class="material-symbols-rounded" style="font-size:20px">right_panel_close</span>
+            </button>
             <div id="reader-fab" role="button" tabindex="0" title="Display settings" aria-label="Display settings">
                 <span class="fab-icon"><span class="material-symbols-rounded">format_size</span></span>
                 <div class="fab-body"></div>
@@ -4065,6 +4176,41 @@
                 });
             })();
 
+            // ── Reader collapse ──
+            // Give the feed grid back the reader's ~630px on demand. Wide mode only:
+            // under 1400px #right is a narrow-mode overlay, so the control is hidden by
+            // CSS and this refuses to act. Mirrors mountSidebarCollapse, including the
+            // localStorage key shape.
+            (function mountReaderCollapse() {
+                const btn = document.getElementById("reader-collapse-btn");
+                const right = document.getElementById("right");
+                if (!btn || !right) return;
+                const isWide = () => window.matchMedia("(min-width: 1400px)").matches;
+                const apply = (collapsed) => {
+                    right.classList.toggle("collapsed", collapsed);
+                    btn.innerHTML = collapsed
+                        ? '<span class="material-symbols-rounded" style="font-size:20px">right_panel_open</span>'
+                        : '<span class="material-symbols-rounded" style="font-size:20px">right_panel_close</span>';
+                    btn.title = collapsed ? "Expand reader" : "Collapse reader";
+                    btn.setAttribute("aria-label", btn.title);
+                    // Masonry columns are computed from the container width, so the grid has to
+                    // be rebuilt once the width transition lands or the cards keep the old count.
+                    setTimeout(() => {
+                        const g = document.getElementById("all-feeds-grid");
+                        if (g && typeof buildMasonry === "function" && viewMode === "masonry")
+                            buildMasonry(g);
+                        window.dispatchEvent(new Event("resize"));
+                    }, 300);
+                };
+                apply(isWide() && localStorage.getItem("reader-collapsed") === "1");
+                btn.addEventListener("click", () => {
+                    if (!isWide()) return;
+                    const collapsed = !right.classList.contains("collapsed");
+                    apply(collapsed);
+                    localStorage.setItem("reader-collapsed", collapsed ? "1" : "0");
+                });
+            })();
+
             // ── Custom article CSS ──
             function scopeCSS(css) {
                 return css.replace(/([^{}@][^{}]*)\{/g, (match, selector) => {
@@ -4546,6 +4692,14 @@
                     <button class="dz-add${subbed ? " added" : ""}">${subbed ? "✓ Added" : "+ Add"}</button>
                 `;
                 const btn = card.querySelector(".dz-add");
+                // Swallow the button's click in EVERY state so it never falls through to the
+                // card's preview handler — the already-subscribed branch below has no listener
+                // of its own, so without this "✓ Added" would open a preview.
+                btn.addEventListener("click", (e) => e.stopPropagation());
+                // Clicking the card previews the source's latest articles WITHOUT subscribing;
+                // adding stays an explicit action on the button.
+                card.style.cursor = "pointer";
+                card.addEventListener("click", () => openDiscoverPreview(src));
                 if (!subbed) {
                     btn.addEventListener("click", async (e) => {
                         e.stopPropagation();
@@ -4626,6 +4780,76 @@
                     cat.sources.forEach((s) => row.appendChild(makeDiscoverCard(s)));
                     body.appendChild(row);
                 });
+            }
+
+            // Preview a source's latest headlines without subscribing. Renders into
+            // #discover-body over the catalog; the back button re-runs renderDiscoverBody
+            // with the current query so the browse state is preserved.
+            async function openDiscoverPreview(src) {
+                const body = document.getElementById("discover-body");
+                if (!body) return;
+                const subbed = discoverIsSubscribed(src.feedUrl);
+                const fav = `https://www.google.com/s2/favicons?domain=${encodeURIComponent(src.host || "")}&sz=64`;
+                body.innerHTML = `
+                    <div class="dz-preview-head">
+                        <button class="dz-back" type="button">
+                            <span class="material-symbols-rounded" style="font-size:18px">arrow_back</span>
+                            Discover
+                        </button>
+                        <img class="dz-fav" src="${fav}" alt="" loading="lazy" onerror="this.style.visibility='hidden'">
+                        <div class="dz-preview-name">${escapeHtml(src.name)}</div>
+                        <button class="dz-add${subbed ? " added" : ""}" type="button">${subbed ? "✓ Added" : "+ Add"}</button>
+                    </div>
+                    <div class="dz-empty dz-preview-status">Loading latest articles…</div>
+                    <div class="article-grid dz-preview-grid"></div>
+                `;
+
+                const searchEl = document.getElementById("dz-search");
+                body.querySelector(".dz-back").addEventListener("click", () =>
+                    renderDiscoverBody(searchEl ? searchEl.value : ""),
+                );
+
+                const addBtn = body.querySelector(".dz-add");
+                if (!subbed) {
+                    addBtn.addEventListener("click", async () => {
+                        addBtn.disabled = true;
+                        addBtn.textContent = "Adding…";
+                        const ok = await GReader.subscribe(src.feedUrl);
+                        if (ok) {
+                            addBtn.classList.add("added");
+                            addBtn.textContent = "✓ Added";
+                            try { await grSyncSubscriptions(); } catch {}
+                        } else {
+                            addBtn.disabled = false;
+                            addBtn.textContent = "+ Add";
+                        }
+                    });
+                }
+
+                const status = body.querySelector(".dz-preview-status");
+                const grid = body.querySelector(".dz-preview-grid");
+                try {
+                    // Deliberately NOT fetchFeed(): that goes through FreshRSS and returns
+                    // empty for a feed we haven't subscribed to, which is every feed here.
+                    const xml = await fetchFeedViaProxy(src.feedUrl);
+                    // Bail if the user navigated away while the fetch was in flight.
+                    if (!grid.isConnected) return;
+                    const doc = new DOMParser().parseFromString(xml, "text/xml");
+                    const items = [...doc.querySelectorAll("item, entry")].slice(0, 24);
+                    if (!items.length) {
+                        status.textContent = "No articles found in this feed.";
+                        return;
+                    }
+                    const feed = { url: src.feedUrl, title: src.name };
+                    items.forEach((item) =>
+                        grid.appendChild(makeArticleEl(item, feed, false, false)),
+                    );
+                    status.remove();
+                } catch (e) {
+                    if (grid.isConnected)
+                        status.textContent =
+                            "Couldn't load this feed — it may be offline or blocking the proxies.";
+                }
             }
 
             function mountDiscoverOpml() {
@@ -5818,11 +6042,22 @@
                                 .map((i) => getLink(i))
                                 .filter(Boolean),
                         );
-                        const existingEls = [
+                        // This feed's cards live in TWO places: the DOM, and _lazyQueue —
+                        // detached elements waiting for a scroll to flush them in. Looking
+                        // only at the DOM broke this twice: the unchanged-check compared
+                        // fresh links against a PARTIAL set (so it almost never matched once
+                        // the grid exceeded one lazy batch, forcing a re-render every time),
+                        // and the queued stale cards survived removal, then got injected on
+                        // scroll as duplicates. Reconcile against both stores.
+                        const domEls = [
                             ...grid.querySelectorAll(
                                 `.article-item[data-feed-url="${CSS.escape(feed.url)}"]`,
                             ),
                         ];
+                        const isThisFeed = (el) =>
+                            !!(el && el.dataset && el.dataset.feedUrl === feed.url);
+                        const queuedEls = _lazyQueue.filter(isThisFeed);
+                        const existingEls = [...domEls, ...queuedEls];
                         const existingLinks = new Set(
                             existingEls
                                 .map((el) => el.dataset.link)
@@ -5837,7 +6072,9 @@
                         offerToFeatured(feed, xml);
                         if (unchanged) return;
 
-                        existingEls.forEach((el) => el.remove());
+                        domEls.forEach((el) => el.remove());
+                        if (queuedEls.length)
+                            _lazyQueue = _lazyQueue.filter((el) => !isThisFeed(el));
                         renderFeedItemsToGrid(feed, xml, false);
                         sortAllFeedsGridDebounced(grid);
                     } catch (e) {
@@ -6206,12 +6443,22 @@
                 let totalW = 0;
                 cards.forEach((_, i) => { totalW += weightFor(Math.abs(i - featuredIndex)); });
                 const cardH = Math.round(Math.min(330, Math.max(220, avail * 0.34)));
+                // Single furthest card from focus renders as a pill (see .featured-card.pill).
+                // Ties — focus centred, equal distance both ways — resolve to the rightmost, since
+                // the keyline slivers trail right. Only applies at the small tier (d >= 2), so a
+                // two- or three-card carousel never pills its adjacent card.
+                let pillIdx = -1, pillD = 1;
+                cards.forEach((_, i) => {
+                    const d = Math.abs(i - featuredIndex);
+                    if (d >= 2 && d >= pillD) { pillD = d; pillIdx = i; }
+                });
                 cards.forEach((c, i) => {
                     const d = Math.abs(i - featuredIndex);
                     c.style.flexBasis = Math.round((weightFor(d) / totalW) * cardArea) + "px";
                     c.style.marginLeft = i === 0 ? "0px" : gap + "px";
                     c.style.height = cardH + "px";
                     c.classList.toggle("focused", i === featuredIndex);
+                    c.classList.toggle("pill", i === pillIdx);
                 });
 
                 const cur = featuredArticles[featuredIndex];
@@ -7565,6 +7812,17 @@
                     return grPromise;
                 }
 
+                const promise = fetchFeedViaProxy(url);
+                _fetchInFlight.set(url, promise);
+                promise.finally(() => _fetchInFlight.delete(url));
+                return promise;
+            }
+
+            // Fetch a feed's XML straight through the public CORS proxies, bypassing
+            // FreshRSS. Discover previews need this: fetchFeed() resolves a stream id out
+            // of feedStreamIds and returns EMPTY xml for anything not already subscribed —
+            // which is precisely the case a preview exists for.
+            function fetchFeedViaProxy(url) {
                 const proxies = [
                     (u) => `https://corsproxy.io/?${encodeURIComponent(u)}`,
                     (u) =>
@@ -7592,10 +7850,7 @@
                     }
                 };
 
-                const promise = Promise.any(proxies.map(tryProxy));
-                _fetchInFlight.set(url, promise);
-                promise.finally(() => _fetchInFlight.delete(url));
-                return promise;
+                return Promise.any(proxies.map(tryProxy));
             }
 
             // ── Helpers ──

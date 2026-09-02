@@ -1247,14 +1247,21 @@ def _norm_url(u):
 def fetch_hn_discussions(url, timeout=8):
     """Hacker News submissions whose story URL matches `url` (Algolia search API)."""
     try:
-        q = urllib.parse.quote(url, safe="")
+        # Search on the NORMALIZED url (host + path, no scheme/www/query/trailing slash),
+        # not the raw feed link. Feed links routinely carry tracking params — ?utm_source=rss
+        # and friends — and searching for those misses the HN submission, which was almost
+        # always made with the clean URL. _norm_url was previously applied only when
+        # filtering the hits, so a dirty link produced an empty search to filter in the
+        # first place. Normalizing both sides is strictly more permissive: exact-match
+        # filtering below still rejects Algolia's fuzzy extras.
+        target = _norm_url(url)
+        q = urllib.parse.quote(target or url, safe="")
         api = ("https://hn.algolia.com/api/v1/search"
                "?restrictSearchableAttributes=url&hitsPerPage=10&query=" + q)
         req = urllib.request.Request(
             api, headers={"User-Agent": _FETCH_UA, "Accept": "application/json"})
         with urllib.request.urlopen(req, timeout=timeout) as resp:
             data = json.loads(resp.read().decode("utf-8"))
-        target = _norm_url(url)
         out = []
         for h in data.get("hits", []):
             if h.get("url") and _norm_url(h["url"]) != target:
