@@ -16,6 +16,7 @@ import html
 import json
 import math
 import ipaddress
+import os
 import re
 import socket
 import sys
@@ -1259,6 +1260,8 @@ _tumblr_lock = threading.Lock()
 _tumblr_gate = threading.Lock()  # one request to Tumblr at a time
 _tumblr_last = 0.0
 TUMBLR_GAP = 1.5  # seconds between requests
+# where to read Tumblr when it challenges this connection: C:\liner-recognize on the Windows box
+TUMBLR_VIA = os.environ.get("TUMBLR_VIA", "http://192.168.0.110:8103").rstrip("/")
 _TUMBLR_NAME = re.compile(r"^[a-z0-9][a-z0-9-]{0,63}$")
 _IMG = re.compile(r"<img[^>]+>", re.I)
 _SRC = re.compile(r'\ssrc="([^"]+)"', re.I)
@@ -1370,8 +1373,17 @@ def tumblr_page(blog, start):
         if wait > 0:
             time.sleep(wait)
         try:
-            with urllib.request.urlopen(req, timeout=20) as resp:
-                text = resp.read().decode("utf-8", "replace")
+            try:
+                with urllib.request.urlopen(req, timeout=20) as resp:
+                    text = resp.read().decode("utf-8", "replace")
+            except urllib.error.HTTPError as e:
+                # Tumblr challenges the home connection ("Checking your browser…", a 403) but
+                # not the Windows box's VPN: ask it to read the page instead
+                if e.code != 403 or not TUMBLR_VIA:
+                    raise
+                via = f"{TUMBLR_VIA}/tumblr-read?blog={blog}&start={start}&num={TUMBLR_PAGE}"
+                with urllib.request.urlopen(via, timeout=30) as resp:
+                    text = resp.read().decode("utf-8", "replace")
         except urllib.error.HTTPError as e:
             if e.code == 429:
                 # the reader waits retryAfter seconds and asks again
