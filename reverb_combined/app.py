@@ -1429,6 +1429,263 @@ def tumblr_page(blog, start):
     return payload
 
 
+# ---- News for Discover: top stories and local news ---------------------------------
+#
+# Top stories: the big outlets' top feeds merged, one card per story (titles clustered), ranked
+# by how many outlets carry it, then how recent. (AP refuses every automated fetch: 403.)
+# Local: Google News for a place; its links are Google redirects whose target only Google's own
+# decoder reveals, so the top ones are decoded (and given the publisher's og:image) here.
+
+NEWS_TOP_FEEDS = [
+    ("https://feeds.bbci.co.uk/news/world/rss.xml", "BBC News"),
+    ("https://feeds.npr.org/1001/rss.xml", "NPR"),
+    ("https://www.theguardian.com/world/rss", "The Guardian"),
+    ("https://www.aljazeera.com/xml/rss/all.xml", "Al Jazeera"),
+    ("https://rss.nytimes.com/services/xml/rss/nyt/HomePage.xml", "The New York Times"),
+]
+NEWS_TTL = 15 * 60
+NEWS_COUNT = 24
+_news_cache = {}  # key -> (fetched_at, payload)
+_news_lock = threading.Lock()
+
+
+def _news_cached(key, build):
+    now = time.time()
+    with _news_lock:
+        hit = _news_cache.get(key)
+    if hit and now - hit[0] < NEWS_TTL:
+        return hit[1]
+    payload = build()
+    if payload.get("items"):
+        with _news_lock:
+            _news_cache[key] = (now, payload)
+    return payload
+
+
+def _news_item(a, outlet, extra=None):
+    item = {
+        "title": a.get("title") or "",
+        "link": a.get("link") or "",
+        "image": a.get("imageUrl"),
+        "source": outlet,
+        "host": _host_of(a.get("link") or "") or "",
+        "published": a.get("publishedAt") or 0,
+        "html": a.get("contentHtml") or "",
+        "excerpt": (a.get("text") or "")[:400],
+    }
+    if extra:
+        item.update(extra)
+    return item
+
+
+def news_top():
+    def build():
+        stories = []  # [{"tokens", "items": [(outlet, article)]}]
+        results = {}
+
+        def grab(url, outlet):
+            results[outlet] = fetch_feed(url)[:30]
+
+        threads = [threading.Thread(target=grab, args=feed) for feed in NEWS_TOP_FEEDS]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join(timeout=25)
+        for outlet, articles in results.items():
+            for a in articles:
+                toks = set(tokenize(a.get("title") or ""))
+                if len(toks) < 3:
+                    continue
+                home = next((s for s in stories if _title_jaccard(toks, s["tokens"]) >= 0.34), None)
+                if home is None:
+                    stories.append({"tokens": toks, "items": [(outlet, a)]})
+                else:
+                    home["items"].append((outlet, a))
+                    home["tokens"] |= toks
+        now_ms = time.time() * 1000
+
+        def score(s):
+            outlets = len({o for o, _ in s["items"]})
+            newest = max((a.get("publishedAt") or 0) for _, a in s["items"])
+            hours = max(0.0, (now_ms - newest) / 3.6e6) if newest else 24
+            return outlets * 3 - hours / 6
+
+        stories.sort(key=score, reverse=True)
+        items = []
+        for s in stories[:NEWS_COUNT]:
+            # the story's card: the outlet with a picture, else the first
+            outlet, a = next(((o, x) for o, x in s["items"] if x.get("imageUrl")), s["items"][0])
+            items.append(_news_item(a, outlet, {"outlets": sorted({o for o, _ in s["items"]})}))
+        return {"items": items}
+
+    return _news_cached("top", build)
+
+
+_GN_SG = re.compile(r'data-n-a-sg="([^"]+)"')
+_GN_TS = re.compile(r'data-n-a-ts="([^"]+)"')
+_OG_IMAGE = re.compile(r'<meta[^>]+(?:property|name)=["\']og:image(?::url)?["\'][^>]+content=["\']([^"\']+)["\']|<meta[^>]+content=["\']([^"\']+)["\'][^>]+(?:property|name)=["\']og:image["\']', re.I)
+
+
+def google_news_target(link):
+    """The publisher's URL behind a news.google.com/rss/articles/<id> link, or None."""
+    m = re.search(r"/articles/([A-Za-z0-9_-]+)", link or "")
+    if not m:
+        return None
+    gid = m.group(1)
+    try:
+        req = urllib.request.Request(f"https://news.google.com/articles/{gid}", headers={"User-Agent": _FETCH_UA})
+        with urllib.request.urlopen(req, timeout=12) as resp:
+            page = resp.read(4_000_000).decode("utf-8", "replace")
+        sg, ts = _GN_SG.search(page), _GN_TS.search(page)
+        if not (sg and ts):
+            return None
+        inner = json.dumps([
+            "garturlreq",
+            [["X", "X", ["X", "X"], None, None, 1, 1, "US:en", None, 1, None, None, None, None, None, 0, 1], "X", "X", 1, [1, 1, 1], 1, 1, None, 0, 0, None, 0],
+            gid, int(ts.group(1)), sg.group(1),
+        ])
+        body = urllib.parse.urlencode({"f.req": json.dumps([[["Fbv4je", inner, None, "generic"]]])}).encode()
+        req = urllib.request.Request(
+            "https://news.google.com/_/DotsSplashUi/data/batchexecute",
+            data=body,
+            headers={"User-Agent": _FETCH_UA, "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8"},
+        )
+        with urllib.request.urlopen(req, timeout=12) as resp:
+            text = resp.read().decode("utf-8", "replace")
+        chunk = json.loads(text.split("\n\n", 1)[1])
+        url = json.loads(chunk[0][2])[1]
+        return url if isinstance(url, str) and url.startswith("http") else None
+    except urllib.error.HTTPError as e:
+        if e.code == 429:
+            # Google throttles its decoder: leave it alone for a while
+            global _gn_backoff_until
+            _gn_backoff_until = time.time() + 600
+        return None
+    except Exception:
+        return None
+
+
+_gn_backoff_until = 0.0
+
+
+def _og_image(url):
+    try:
+        req = urllib.request.Request(url, headers={"User-Agent": _FETCH_UA, "Accept": "text/html"})
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            head = resp.read(300_000).decode("utf-8", "replace")
+        m = _OG_IMAGE.search(head)
+        img = (m.group(1) or m.group(2)) if m else None
+        return html.unescape(img) if img and img.startswith("http") else None
+    except Exception:
+        return None
+
+
+_gn_resolved = {}  # google link -> (url, image)
+
+
+_gn_inflight = set()
+_gn_feeds = {}  # place -> (fetched_at, articles)
+
+
+def _resolve_later(links):
+    """Decodes Google links (and finds their og:image) in the background: two at a time, a
+    breath apart, each remembered; after a 429 from Google, none for ten minutes."""
+    if time.time() < _gn_backoff_until:
+        return
+    todo = [l for l in links if l not in _gn_resolved and l not in _gn_inflight]
+    if not todo:
+        return
+    _gn_inflight.update(todo)
+
+    def work(chunk):
+        for link in chunk:
+            try:
+                if time.time() < _gn_backoff_until:
+                    continue  # throttled: left for a later request
+                target = google_news_target(link)
+                if target is None and time.time() < _gn_backoff_until:
+                    continue  # failed only because of the throttle: try again later
+                _gn_resolved[link] = (target, _og_image(target) if target else None)
+                time.sleep(0.6)
+            finally:
+                _gn_inflight.discard(link)
+
+    for i in range(2):
+        threading.Thread(target=work, args=(todo[i::2],), daemon=True).start()
+
+
+def news_local(place):
+    """Google News for a place, at once: stories whose link is decoded already carry the real
+    article and its picture; the rest are decoded in the background ("pending" says how many),
+    and the reader asks again shortly to pick them up."""
+    place = (place or "").strip()[:80]
+    if not place:
+        return {"items": [], "error": "no place"}
+    key = place.lower()
+    now = time.time()
+    hit = _gn_feeds.get(key)
+    if hit and now - hit[0] < NEWS_TTL:
+        articles = hit[1]
+    else:
+        q = urllib.parse.quote(place)
+        # Google News' local section for the place (its plain search pulls in obituaries and fan blogs)
+        articles = fetch_feed(f"https://news.google.com/rss/headlines/section/geo/{q}?hl=en-US&gl=US&ceid=US:en")[:NEWS_COUNT]
+        if articles:
+            _gn_feeds[key] = (now, articles)
+    _resolve_later([a.get("link") or "" for a in articles])
+    items = []
+    pending = 0
+    for a in articles:
+        title = a.get("title") or ""
+        outlet = title.rsplit(" - ", 1)[1].strip() if " - " in title else (a.get("feedTitle") or "")
+        item = _news_item(a, outlet)
+        item["title"] = title.rsplit(" - ", 1)[0].strip() if " - " in title else title
+        done = _gn_resolved.get(a.get("link") or "")
+        if done is None:
+            pending += 1
+            item["image"] = None
+        else:
+            target, image = done
+            if target:
+                item["link"] = target
+                item["host"] = _host_of(target) or ""
+                # Google's description is only a link list: the reader's Full view fetches the page
+                item["html"] = ""
+            item["image"] = image
+        items.append(item)
+    return {"place": place, "items": items, "pending": pending}
+
+
+# ---- tiny shared prefs (the local-news place), kept with the add-on's data ----------------
+
+_PREFS_FILE = "/data/reverb-prefs.json" if os.path.isdir("/data") else os.path.join(os.path.dirname(os.path.abspath(__file__)), "reverb-prefs.json")
+_PREF_KEY = re.compile(r"^[a-z0-9-]{1,40}$")
+_prefs_lock = threading.Lock()
+
+
+def prefs_read():
+    try:
+        with open(_PREFS_FILE, encoding="utf-8") as f:
+            v = json.load(f)
+            return v if isinstance(v, dict) else {}
+    except Exception:
+        return {}
+
+
+def prefs_write(key, value):
+    with _prefs_lock:
+        p = prefs_read()
+        if value is None:
+            p.pop(key, None)
+        else:
+            p[key] = value
+        tmp = _PREFS_FILE + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(p, f)
+        os.replace(tmp, _PREFS_FILE)
+        return p
+
+
 PAGE_MAX_BYTES = 6 * 1024 * 1024
 
 
@@ -1706,15 +1963,30 @@ def make_handler(indexer, opts):
             self.send_header("Content-Type", "application/json")
             self.send_header("Content-Length", str(len(body)))
             self.send_header("Access-Control-Allow-Origin", "*")
-            self.send_header("Access-Control-Allow-Methods", "GET, OPTIONS")
+            self.send_header("Access-Control-Allow-Methods", "GET, PUT, OPTIONS")
             self.send_header("Access-Control-Allow-Headers", "*")
             self.end_headers()
             self.wfile.write(body)
 
+        def do_PUT(self):
+            # PUT /prefs/<key> with a JSON body (null removes it): the web reader's few shared
+            # settings (the local-news place), so every device sees the same
+            try:
+                path = urllib.parse.urlparse(self.path).path.rstrip("/")
+                m = re.match(r"^/prefs/([a-z0-9-]{1,40})$", path)
+                n = int(self.headers.get("Content-Length") or 0)
+                if not m or n > 10_000:
+                    self._send_json({"error": "bad request"}, status=400)
+                    return
+                value = json.loads(self.rfile.read(n) or b"null")
+                self._send_json(prefs_write(m.group(1), value))
+            except Exception as e:
+                self._send_json({"error": str(e)}, status=400)
+
         def do_OPTIONS(self):
             self.send_response(204)
             self.send_header("Access-Control-Allow-Origin", "*")
-            self.send_header("Access-Control-Allow-Methods", "GET, OPTIONS")
+            self.send_header("Access-Control-Allow-Methods", "GET, PUT, OPTIONS")
             self.send_header("Access-Control-Allow-Headers", "*")
             self.send_header("Content-Length", "0")
             self.end_headers()
@@ -1762,6 +2034,18 @@ def make_handler(indexer, opts):
                     # if configured). Independent of the corpus.
                     link = (qs.get("link") or [None])[0]
                     self._send_json(discussions_payload(link, opts))
+                    return
+
+                if path == "/news/top":
+                    self._send_json(news_top())
+                    return
+
+                if path == "/news/local":
+                    self._send_json(news_local((qs.get("q") or [""])[0]))
+                    return
+
+                if path == "/prefs":
+                    self._send_json(prefs_read())
                     return
 
                 if path == "/tumblr":
