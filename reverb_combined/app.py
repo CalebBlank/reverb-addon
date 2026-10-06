@@ -96,6 +96,21 @@ CATALOG = [
     ("https://design-milk.com/feed/", "Design Milk", "design"),
     ("https://www.swiss-miss.com/feed", "swissmiss", "design"),
     ("https://www.fastcompany.com/section/design/rss", "Fast Company Design", "design"),
+    # ── moodboards ──
+    # image-led design blogs in the circle Caleb's FileSaveAs / SamirSadikhov / Minus-Nothing reblog
+    # from (found from their reblog credits, 2026-10-06; each active within ~6 months). Most are
+    # Tumblr: the web reader scrolls on through their whole history past the feed.
+    ("https://nagutsi.tumblr.com/rss", "Nagutsi", "moodboard"),
+    ("https://formlab.tumblr.com/rss", "Formlab", "moodboard"),
+    ("https://searchsystem.co/rss", "SearchSystem", "moodboard"),
+    ("https://jamescullen.tumblr.com/rss", "Free Refills", "moodboard"),
+    ("https://ourheatisgospel.tumblr.com/rss", "our heat is gospel", "moodboard"),
+    ("https://inspired-city.tumblr.com/rss", "Inspired-City", "moodboard"),
+    ("https://fernand0adnan.tumblr.com/rss", "Adnan Fernando", "moodboard"),
+    ("https://benbentobox.tumblr.com/rss", "bentobox", "moodboard"),
+    ("https://tom-bril.tumblr.com/rss", "Tom Bril", "moodboard"),
+    ("https://leibal.com/feed/", "Leibal", "moodboard"),
+    ("https://minimalissimo.com/feed", "Minimalissimo", "moodboard"),
     # ── art ──
     ("https://hyperallergic.com/feed/", "Hyperallergic", "art"),
     ("https://artdaily.com/rss.asp", "Artdaily", "art"),
@@ -188,6 +203,7 @@ CATALOG_NAME = {url: name for (url, name, _genre) in CATALOG}
 # genres share one row; this order is the order the rows appear in the app.
 CATALOG_SECTIONS = [
     ("Design", ["design"]),
+    ("Moodboards", ["moodboard"]),
     ("Art", ["art"]),
     ("Architecture", ["architecture"]),
     ("Cooking", ["cooking"]),
