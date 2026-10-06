@@ -1277,6 +1277,7 @@ def _largest_img(tag):
     """A card-sized image an <img> offers (its srcset's smallest >= CARD_WIDTH, else its widest),
     with its original size."""
     url = None
+    full = None
     m = _SRCSET.search(tag)
     if m:
         sizes = []
@@ -1290,12 +1291,13 @@ def _largest_img(tag):
         if sizes:
             sizes.sort()
             url = next((u for w, u in sizes if w >= CARD_WIDTH), sizes[-1][1])
+            full = sizes[-1][1]
     if not url:
         m = _SRC.search(tag)
         url = m.group(1) if m else None
     w = _ORIG_W.search(tag)
     h = _ORIG_H.search(tag)
-    return url, (int(w.group(1)) if w else None), (int(h.group(1)) if h else None)
+    return url, (int(w.group(1)) if w else None), (int(h.group(1)) if h else None), full or url
 
 
 def _tumblr_item(blog, p):
@@ -1314,16 +1316,16 @@ def _tumblr_item(blog, p):
         caption = p.get("photo-caption") or ""
         # the post at full size; the card gets the 500 px one
         body_html = "".join(f'<p><img src="{html.escape(u or "", quote=True)}"></p>' for u, _, _, _ in images if u) + caption
-        images = [(small or big, w, h) for big, w, h, small in images]
+        images = [(small or big, w, h, big) for big, w, h, small in images]
         title = strip_html(caption)[:140]
     elif kind == "regular":
         body = p.get("regular-body") or ""
         body_html = body
         title = p.get("regular-title") or strip_html(body)[:140]
         for tag in _IMG.findall(body):
-            u, w, h = _largest_img(tag)
+            u, w, h, big = _largest_img(tag)
             if u:
-                images.append((u, w, h))
+                images.append((u, w, h, big))
     elif kind == "quote":
         body_html = f"<blockquote><p>{p.get('quote-text', '')}</p></blockquote>{p.get('quote-source', '')}"
         title = strip_html(p.get("quote-text", ""))[:140]
@@ -1335,7 +1337,7 @@ def _tumblr_item(blog, p):
         title = strip_html(p.get("video-caption") or "")[:140]
     else:
         return None
-    lead = next(((u, w, h) for u, w, h in images if u), (None, None, None))
+    lead = next(((u, w, h, big) for u, w, h, big in images if u), (None, None, None, None))
     try:
         ts = int(p.get("unix-timestamp") or 0) * 1000
     except ValueError:
@@ -1346,6 +1348,8 @@ def _tumblr_item(blog, p):
         "title": title.strip() or f"{blog} · {kind}",
         "html": body_html,
         "image": lead[0],
+        # the picture at full size, for the reader's hero and the lightbox (cards use "image")
+        "full": lead[3] or lead[0],
         "imageWidth": lead[1],
         "imageHeight": lead[2],
         "published": ts,
