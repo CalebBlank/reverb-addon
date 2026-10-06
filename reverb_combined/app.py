@@ -1246,6 +1246,157 @@ def _norm_url(u):
         return (u or "").strip().lower()
 
 
+# ---- Tumblr back catalogues ----------------------------------------------------------
+#
+# A Tumblr RSS feed only carries its last ~20 posts, but Tumblr's old public read API
+# (https://<blog>.tumblr.com/api/read/json, no key) pages through every post, 50 at a time.
+# Pages are cached: older pages never change, the first one is refreshed after a while.
+
+TUMBLR_PAGE = 50
+TUMBLR_FRESH = 30 * 60  # seconds the newest page is kept
+_tumblr_cache = {}  # (blog, start) -> (fetched_at, payload)
+_tumblr_lock = threading.Lock()
+_tumblr_gate = threading.Lock()  # one request to Tumblr at a time
+_tumblr_last = 0.0
+TUMBLR_GAP = 1.5  # seconds between requests
+_TUMBLR_NAME = re.compile(r"^[a-z0-9][a-z0-9-]{0,63}$")
+_IMG = re.compile(r"<img[^>]+>", re.I)
+_SRC = re.compile(r'\ssrc="([^"]+)"', re.I)
+_SRCSET = re.compile(r'\ssrcset="([^"]+)"', re.I)
+_ORIG_W = re.compile(r'data-orig-width="(\d+)"', re.I)
+_ORIG_H = re.compile(r'data-orig-height="(\d+)"', re.I)
+
+
+CARD_WIDTH = 640  # a grid card's picture: the srcset's first size at least this wide
+
+
+def _largest_img(tag):
+    """A card-sized image an <img> offers (its srcset's smallest >= CARD_WIDTH, else its widest),
+    with its original size."""
+    url = None
+    m = _SRCSET.search(tag)
+    if m:
+        sizes = []
+        for part in m.group(1).split(","):
+            bits = part.strip().split()
+            if len(bits) == 2 and bits[1].endswith("w"):
+                try:
+                    sizes.append((int(bits[1][:-1]), bits[0]))
+                except ValueError:
+                    continue
+        if sizes:
+            sizes.sort()
+            url = next((u for w, u in sizes if w >= CARD_WIDTH), sizes[-1][1])
+    if not url:
+        m = _SRC.search(tag)
+        url = m.group(1) if m else None
+    w = _ORIG_W.search(tag)
+    h = _ORIG_H.search(tag)
+    return url, (int(w.group(1)) if w else None), (int(h.group(1)) if h else None)
+
+
+def _tumblr_item(blog, p):
+    """A post as the reader's article: title, HTML, lead image (with its size), time."""
+    kind = p.get("type")
+    images = []  # (url, w, h)
+    body_html = ""
+    title = ""
+    if kind == "photo":
+        photos = p.get("photos") or []
+        if photos:
+            for ph in photos:
+                images.append((ph.get("photo-url-1280"), ph.get("width"), ph.get("height"), ph.get("photo-url-500")))
+        elif p.get("photo-url-1280"):
+            images.append((p.get("photo-url-1280"), p.get("width"), p.get("height"), p.get("photo-url-500")))
+        caption = p.get("photo-caption") or ""
+        # the post at full size; the card gets the 500 px one
+        body_html = "".join(f'<p><img src="{html.escape(u or "", quote=True)}"></p>' for u, _, _, _ in images if u) + caption
+        images = [(small or big, w, h) for big, w, h, small in images]
+        title = strip_html(caption)[:140]
+    elif kind == "regular":
+        body = p.get("regular-body") or ""
+        body_html = body
+        title = p.get("regular-title") or strip_html(body)[:140]
+        for tag in _IMG.findall(body):
+            u, w, h = _largest_img(tag)
+            if u:
+                images.append((u, w, h))
+    elif kind == "quote":
+        body_html = f"<blockquote><p>{p.get('quote-text', '')}</p></blockquote>{p.get('quote-source', '')}"
+        title = strip_html(p.get("quote-text", ""))[:140]
+    elif kind == "link":
+        body_html = f'<p><a href="{html.escape(p.get("link-url", ""), quote=True)}">{p.get("link-text") or p.get("link-url", "")}</a></p>{p.get("link-description", "")}'
+        title = strip_html(p.get("link-text") or p.get("link-url", ""))[:140]
+    elif kind == "video":
+        body_html = (p.get("video-player") or "") + (p.get("video-caption") or "")
+        title = strip_html(p.get("video-caption") or "")[:140]
+    else:
+        return None
+    lead = next(((u, w, h) for u, w, h in images if u), (None, None, None))
+    try:
+        ts = int(p.get("unix-timestamp") or 0) * 1000
+    except ValueError:
+        ts = 0
+    return {
+        "id": f"tumblr:{blog}:{p.get('id')}",
+        "url": p.get("url-with-slug") or p.get("url"),
+        "title": title.strip() or f"{blog} · {kind}",
+        "html": body_html,
+        "image": lead[0],
+        "imageWidth": lead[1],
+        "imageHeight": lead[2],
+        "published": ts,
+        "tags": p.get("tags") or [],
+    }
+
+
+def tumblr_page(blog, start):
+    """{"total", "start", "items": [...]} for posts start..start+50, newest first."""
+    blog = (blog or "").strip().lower()
+    if not _TUMBLR_NAME.match(blog):
+        return {"error": "bad blog name", "total": 0, "start": start, "items": []}
+    key = (blog, start)
+    now = time.time()
+    with _tumblr_lock:
+        hit = _tumblr_cache.get(key)
+    if hit and (start > 0 or now - hit[0] < TUMBLR_FRESH):
+        return hit[1]
+    url = f"https://{blog}.tumblr.com/api/read/json?start={start}&num={TUMBLR_PAGE}"
+    req = urllib.request.Request(url, headers={"User-Agent": _FETCH_UA})
+    # Tumblr rate-limits bursts (HTTP 429): one request at a time, a breath apart
+    global _tumblr_last
+    with _tumblr_gate:
+        wait = _tumblr_last + TUMBLR_GAP - time.time()
+        if wait > 0:
+            time.sleep(wait)
+        try:
+            with urllib.request.urlopen(req, timeout=20) as resp:
+                text = resp.read().decode("utf-8", "replace")
+        except urllib.error.HTTPError as e:
+            if e.code == 429:
+                # the reader waits retryAfter seconds and asks again
+                return {"error": "tumblr: rate limited", "retryAfter": 20, "total": 0, "start": start, "items": []}
+            return {"error": f"tumblr: {e}", "total": 0, "start": start, "items": []}
+        except Exception as e:
+            return {"error": f"tumblr: {e}", "total": 0, "start": start, "items": []}
+        finally:
+            _tumblr_last = time.time()
+    # it's JSONP: "var tumblr_api_read = {...};"
+    text = text[text.find("{"): text.rfind("}") + 1]
+    try:
+        data = json.loads(text)
+    except ValueError:
+        return {"error": "tumblr: unreadable reply", "total": 0, "start": start, "items": []}
+    items = [i for i in (_tumblr_item(blog, p) for p in data.get("posts", [])) if i]
+    payload = {"total": int(data.get("posts-total") or 0), "start": start, "items": items}
+    with _tumblr_lock:
+        _tumblr_cache[key] = (now, payload)
+        if len(_tumblr_cache) > 400:
+            for k in sorted(_tumblr_cache, key=lambda k: _tumblr_cache[k][0])[:100]:
+                _tumblr_cache.pop(k, None)
+    return payload
+
+
 PAGE_MAX_BYTES = 6 * 1024 * 1024
 
 
@@ -1579,6 +1730,17 @@ def make_handler(indexer, opts):
                     # if configured). Independent of the corpus.
                     link = (qs.get("link") or [None])[0]
                     self._send_json(discussions_payload(link, opts))
+                    return
+
+                if path == "/tumblr":
+                    # A Tumblr blog's back catalogue, 50 posts a page, for the web reader to
+                    # keep scrolling past what the feed (and so FreshRSS) ever carried.
+                    blog = (qs.get("blog") or [""])[0]
+                    try:
+                        start = max(0, int((qs.get("start") or ["0"])[0]))
+                    except ValueError:
+                        start = 0
+                    self._send_json(tumblr_page(blog, start))
                     return
 
                 if path == "/page":
