@@ -2318,13 +2318,96 @@ def bluesky_engagement(link, handle, app_password, timeout=6):
         return zero
 
 
+_reddit_cache = {}  # normalized url -> (fetched_at, [discussion])
+_reddit_gate = threading.Lock()
+_reddit_last = 0.0
+_reddit_backoff_until = 0.0
+REDDIT_TTL = 60 * 60
+REDDIT_GAP = 2.0  # seconds between requests: Reddit answers 429 to anything brisker
+
+
+def fetch_reddit_discussions(url, timeout=8):
+    """Reddit threads that link `url`. Reddit's JSON API refuses anonymous callers (403), but
+    its search RSS still answers: `url:` finds submissions of the article, each entry naming
+    the subreddit, the poster and (inside its HTML) the link it points at, which is checked
+    against the article so a fuzzy hit isn't shown. It carries no points or comment counts.
+    Remembered for an hour; one request every two seconds; after a 429, none for ten minutes."""
+    global _reddit_last, _reddit_backoff_until
+    target = _norm_url(url)
+    if not target:
+        return []
+    hit = _reddit_cache.get(target)
+    if hit and time.time() - hit[0] < REDDIT_TTL:
+        return hit[1]
+    if time.time() < _reddit_backoff_until:
+        return []
+    q = urllib.parse.quote("url:" + target, safe="")
+    api = f"https://www.reddit.com/search.rss?q={q}&sort=top&limit=10"
+    with _reddit_gate:
+        wait = _reddit_last + REDDIT_GAP - time.time()
+        if wait > 0:
+            time.sleep(wait)
+        try:
+            req = urllib.request.Request(api, headers={"User-Agent": _FETCH_UA})
+            with urllib.request.urlopen(req, timeout=timeout) as resp:
+                text = resp.read(1_000_000).decode("utf-8", "replace")
+        except urllib.error.HTTPError as e:
+            if e.code == 429:
+                _reddit_backoff_until = time.time() + 600
+            print(f"[recommender] Reddit discussions failed: {e}", flush=True)
+            return []
+        except Exception as e:
+            print(f"[recommender] Reddit discussions failed: {e}", flush=True)
+            return []
+        finally:
+            _reddit_last = time.time()
+    out = []
+    try:
+        root = ET.fromstring(text)
+    except ET.ParseError:
+        return []
+    ns = "{http://www.w3.org/2005/Atom}"
+    for e in root.iter(ns + "entry"):
+        content = html.unescape(e.findtext(ns + "content") or "")
+        # the submitted link: the anchor labelled [link]
+        m = re.search(r'<a href="([^"]+)">\s*\[link\]', content)
+        if not m or _norm_url(html.unescape(m.group(1))) != target:
+            continue
+        thread = ""
+        for ln in e.findall(ns + "link"):
+            thread = ln.get("href") or thread
+        cat = e.find(ns + "category")
+        sub = (cat.get("label") if cat is not None else "") or ""
+        author = (e.findtext(f"{ns}author/{ns}name") or "").strip()
+        out.append({
+            "platform": "reddit",
+            "author": " · ".join(x for x in (sub, author.lstrip("/")) if x),
+            "text": html.unescape(e.findtext(ns + "title") or "").strip(),
+            "url": thread,
+            "points": 0,
+            "comments": 0,
+            "createdAt": e.findtext(ns + "updated") or "",
+        })
+    _reddit_cache[target] = (time.time(), out)
+    if len(_reddit_cache) > 2000:
+        for k in sorted(_reddit_cache, key=lambda k: _reddit_cache[k][0])[:500]:
+            _reddit_cache.pop(k, None)
+    return out
+
+
 def discussions_payload(link, opts):
-    """HN (always) + Bluesky (if configured) posts that linked `link`; best engagement first."""
+    """HN and Reddit (always) + Bluesky (if configured) posts that linked `link`; best
+    engagement first (Reddit's threads carry no counts, so they follow the counted ones)."""
     if not link:
         return {"items": []}
+    reddit = []
+    t = threading.Thread(target=lambda: reddit.extend(fetch_reddit_discussions(link)), daemon=True)
+    t.start()
     items = fetch_hn_discussions(link)
     items += fetch_bluesky_discussions(
         link, opts.get("bluesky_handle", ""), opts.get("bluesky_app_password", ""))
+    t.join(12)
+    items += reddit
     items.sort(key=lambda d: (d.get("comments", 0) + d.get("points", 0)), reverse=True)
     return {"items": items}
 
