@@ -1637,10 +1637,127 @@ def _resolve_later(links):
         threading.Thread(target=work, args=(todo[i::2],), daemon=True).start()
 
 
+_bing_feeds = {}  # place -> (fetched_at, items)
+_BING_NS = "{https://www.bing.com/news/search}"
+
+
+def _bing_items(xml_text):
+    """Bing News RSS as news items. Its links are either the article itself or Bing's click
+    counter with the article in `url=`; its pictures are Bing thumbnails, sized up here."""
+    items = []
+    try:
+        root = ET.fromstring(xml_text)
+    except ET.ParseError:
+        return items
+    for it in root.iter("item"):
+        def child(name):
+            for c in it:
+                if c.tag == name or c.tag.endswith("}" + name):
+                    return (c.text or "").strip()
+            return ""
+
+        link = child("link")
+        if "bing.com/news/apiclick" in link:
+            link = (urllib.parse.parse_qs(urllib.parse.urlparse(link).query).get("url") or [""])[0]
+        if not link.startswith("http"):
+            continue
+        image = child("Image")
+        if image:
+            if image.startswith("/"):
+                image = "https://www.bing.com" + image
+            w, h = child("ImageMaxWidth") or "800", child("ImageMaxHeight") or "450"
+            image += f"&w={w}&h={h}&c=14"
+        try:
+            published = int(email.utils.parsedate_to_datetime(child("pubDate")).timestamp() * 1000)
+        except Exception:
+            published = 0
+        desc = html.unescape(child("description"))
+        items.append({
+            "title": html.unescape(child("title")),
+            "link": link,
+            "image": image or None,
+            "source": re.sub(r"\s+on MSN$", "", child("Source")),
+            "host": _host_of(link) or "",
+            "published": published,
+            "html": f"<p>{html.escape(desc)}</p>" if desc else "",
+            "excerpt": desc[:400],
+        })
+    return items
+
+
+_enriched = {}  # link -> fields found for it (MSN's article, a page's og:image)
+_MSN_ID = re.compile(r"^https?://(?:www\.)?msn\.com/([a-z]{2}-[a-z]{2})/.*/ar-([A-Za-z0-9]+)")
+
+
+def _enrich(item):
+    """Fills in what a Bing story lacks. An MSN link (most local TV stations syndicate there) is
+    a script-drawn page with nothing to read, but MSN's content API has the whole article: its
+    body, its picture and the station's own address. Anything else without a picture gets its
+    page's og:image."""
+    link = item["link"]
+    found = _enriched.get(link)
+    if found is None:
+        found = {}
+        m = _MSN_ID.match(link)
+        if m:
+            try:
+                req = urllib.request.Request(f"https://assets.msn.com/content/view/v2/Detail/{m.group(1)}/{m.group(2)}", headers={"User-Agent": _FETCH_UA})
+                with urllib.request.urlopen(req, timeout=10) as resp:
+                    j = json.loads(resp.read(3_000_000))
+                body = re.sub(r"<img\b[^>]*data-reference[^>]*>", "", j.get("body") or "")
+                if body.strip():
+                    found["html"] = body
+                imgs = [i.get("url") for i in j.get("imageResources") or [] if (i.get("url") or "").startswith("http")]
+                if imgs:
+                    found["image"] = imgs[0]
+                if (j.get("sourceHref") or "").startswith("http"):
+                    found["link"] = j["sourceHref"]
+                    found["host"] = _host_of(j["sourceHref"]) or ""
+                names = [a.get("name") for a in j.get("authors") or [] if a.get("name")]
+                if names:
+                    found["author"] = ", ".join(names)
+            except Exception:
+                pass
+        elif not item.get("image"):
+            image = _og_image(link)
+            if image:
+                found["image"] = image
+        _enriched[link] = found
+    item.update(found)
+
+
+def _bing_news(place):
+    """Bing's news for "<place> news" (the bare place name returns a handful), cached like the rest."""
+    key = place.lower()
+    hit = _bing_feeds.get(key)
+    if hit and time.time() - hit[0] < NEWS_TTL:
+        return hit[1]
+    items = []
+    for extra in ("", "&qft=sortbydate%3d%221%22"):
+        url = f"https://www.bing.com/news/search?q={urllib.parse.quote(place + ' news')}&format=rss&mkt=en-US{extra}"
+        try:
+            req = urllib.request.Request(url, headers={"User-Agent": _FETCH_UA})
+            with urllib.request.urlopen(req, timeout=12) as resp:
+                items = _bing_items(resp.read(2_000_000).decode("utf-8", "replace"))
+        except Exception:
+            items = []
+        if len(items) >= 5:
+            break
+    threads = [threading.Thread(target=_enrich, args=(it,), daemon=True) for it in items]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join(12)
+    if items:
+        _bing_feeds[key] = (time.time(), items)
+    return items
+
+
 def news_local(place):
-    """Google News for a place, at once: stories whose link is decoded already carry the real
-    article and its picture; the rest are decoded in the background ("pending" says how many),
-    and the reader asks again shortly to pick them up."""
+    """Local news for a place, at once: Bing's stories (real links, real pictures) merged with
+    Google News' local section. A Google story shows only once its link is decoded (in the
+    background, "pending" says how many are left; the reader asks again shortly); until then it
+    would open on Google's redirect page, with no text and no picture."""
     place = (place or "").strip()[:80]
     if not place:
         return {"items": [], "error": "no place"}
@@ -1656,27 +1773,37 @@ def news_local(place):
         if articles:
             _gn_feeds[key] = (now, articles)
     _resolve_later([a.get("link") or "" for a in articles])
-    items = []
+    google = []
     pending = 0
     for a in articles:
+        done = _gn_resolved.get(a.get("link") or "")
+        if done is None:
+            pending += 1
+            continue
+        target, image = done
+        if not target:
+            continue
         title = a.get("title") or ""
         outlet = title.rsplit(" - ", 1)[1].strip() if " - " in title else (a.get("feedTitle") or "")
         item = _news_item(a, outlet)
         item["title"] = title.rsplit(" - ", 1)[0].strip() if " - " in title else title
-        done = _gn_resolved.get(a.get("link") or "")
-        if done is None:
-            pending += 1
-            item["image"] = None
-        else:
-            target, image = done
-            if target:
-                item["link"] = target
-                item["host"] = _host_of(target) or ""
-                # Google's description is only a link list: the reader's Full view fetches the page
-                item["html"] = ""
-            item["image"] = image
+        item["link"] = target
+        item["host"] = _host_of(target) or ""
+        # Google's description is only a link list: the reader fetches the page
+        item["html"] = ""
+        item["excerpt"] = ""
+        item["image"] = image
+        google.append(item)
+    # one story told by both: keep the first (Bing's, which has a picture and a summary)
+    items, seen = [], []
+    for item in _bing_news(place) + google:
+        toks = set(tokenize(item["title"]))
+        if item["link"] in {i["link"] for i in items} or any(_title_jaccard(toks, s) >= 0.5 for s in seen):
+            continue
+        seen.append(toks)
         items.append(item)
-    return {"place": place, "items": items, "pending": pending}
+    items.sort(key=lambda i: i["published"] or 0, reverse=True)
+    return {"place": place, "items": items[:NEWS_COUNT], "pending": pending}
 
 
 # ---- tiny shared prefs (the local-news place), kept with the add-on's data ----------------
