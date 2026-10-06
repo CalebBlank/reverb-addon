@@ -2015,6 +2015,8 @@ def _list_summary(l):
         "ids": [i.get("id") for i in l.get("items") or []],
         # and their links: the Android app keys articles by link, not by FreshRSS id
         "links": [i.get("link") for i in l.get("items") or []],
+        # the newest four pictures, for the list's card on the Saved page
+        "covers": [c for c in ((i.get("thumb") or i.get("image")) for i in l.get("items") or []) if c][:4],
     }
 
 
