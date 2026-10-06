@@ -1796,15 +1796,15 @@ def _enrich(item):
     item.update(found)
 
 
-def _bing_news(place):
-    """Bing's news for "<place> news" (the bare place name returns a handful), cached like the rest."""
-    key = place.lower()
+def _bing_news(query):
+    """Bing's news for a query, cached like the rest; each story filled in by _enrich."""
+    key = query.lower()
     hit = _bing_feeds.get(key)
     if hit and time.time() - hit[0] < NEWS_TTL:
         return hit[1]
     items = []
     for extra in ("", "&qft=sortbydate%3d%221%22"):
-        url = f"https://www.bing.com/news/search?q={urllib.parse.quote(place + ' news')}&format=rss&mkt=en-US{extra}"
+        url = f"https://www.bing.com/news/search?q={urllib.parse.quote(query)}&format=rss&mkt=en-US{extra}"
         try:
             req = urllib.request.Request(url, headers={"User-Agent": _FETCH_UA})
             with urllib.request.urlopen(req, timeout=12) as resp:
@@ -1831,15 +1831,38 @@ def news_local(place):
     place = (place or "").strip()[:80]
     if not place:
         return {"items": [], "error": "no place"}
-    key = place.lower()
+    q = urllib.parse.quote(place)
+    # Google News' local section for the place (its plain search pulls in obituaries and fan
+    # blogs); Bing's bare place name returns a handful, "<place> news" a page
+    items, pending = _news_mix(
+        f"geo:{place.lower()}",
+        f"https://news.google.com/rss/headlines/section/geo/{q}?hl=en-US&gl=US&ceid=US:en",
+        place + " news",
+    )
+    return {"place": place, "items": items, "pending": pending}
+
+
+def news_search(term):
+    """A saved search's web news: Bing and Google News searched for the term, merged like the
+    local news. (The reader adds the matching articles from your own feeds.)"""
+    term = (term or "").strip()[:120]
+    if not term:
+        return {"items": [], "error": "no query"}
+    q = urllib.parse.quote(term)
+    items, pending = _news_mix(f"search:{term.lower()}", f"https://news.google.com/rss/search?q={q}&hl=en-US&gl=US&ceid=US:en", term)
+    return {"query": term, "items": items, "pending": pending}
+
+
+def _news_mix(key, google_url, bing_query):
+    """(items, pending): Bing's stories merged with Google News' (only those whose link is
+    decoded; "pending" counts the rest, decoding in the background), one card per story,
+    newest first."""
     now = time.time()
     hit = _gn_feeds.get(key)
     if hit and now - hit[0] < NEWS_TTL:
         articles = hit[1]
     else:
-        q = urllib.parse.quote(place)
-        # Google News' local section for the place (its plain search pulls in obituaries and fan blogs)
-        articles = fetch_feed(f"https://news.google.com/rss/headlines/section/geo/{q}?hl=en-US&gl=US&ceid=US:en")[:NEWS_COUNT]
+        articles = fetch_feed(google_url)[:NEWS_COUNT]
         if articles:
             _gn_feeds[key] = (now, articles)
     _resolve_later([a.get("link") or "" for a in articles])
@@ -1866,14 +1889,14 @@ def news_local(place):
         google.append(item)
     # one story told by both: keep the first (Bing's, which has a picture and a summary)
     items, seen = [], []
-    for item in _bing_news(place) + google:
+    for item in _bing_news(bing_query) + google:
         toks = set(tokenize(item["title"]))
         if item["link"] in {i["link"] for i in items} or any(_title_jaccard(toks, s) >= 0.5 for s in seen):
             continue
         seen.append(toks)
         items.append(item)
     items.sort(key=lambda i: i["published"] or 0, reverse=True)
-    return {"place": place, "items": items[:NEWS_COUNT], "pending": pending}
+    return items[:NEWS_COUNT], pending
 
 
 # ---- tiny shared prefs (the local-news place), kept with the add-on's data ----------------
@@ -1904,6 +1927,151 @@ def prefs_write(key, value):
             json.dump(p, f)
         os.replace(tmp, _PREFS_FILE)
         return p
+
+
+# ---- lists: saved articles and saved searches, kept with the add-on's data ----------------
+#
+# A list is manual (articles you add: a copy of each, so Tumblr archive posts, Discover previews
+# and news, which FreshRSS doesn't hold, can be saved too) or a saved search (its query; its
+# articles are found fresh each time). "stars" is the manual list behind starring those
+# browse-only articles. Every device reads the same file.
+
+_LISTS_FILE = os.path.join(os.path.dirname(_PREFS_FILE), "reverb-lists.json")
+_LIST_ID = re.compile(r"^[a-z0-9-]{1,40}$")
+LIST_MAX_ITEMS = 2000
+_SNAPSHOT_KEYS = ("id", "title", "link", "feedId", "feedTitle", "source", "folder", "image", "thumb", "ratio", "excerpt", "html", "published", "author")
+_lists_lock = threading.Lock()
+
+
+def _lists_load():
+    try:
+        with open(_LISTS_FILE, encoding="utf-8") as f:
+            v = json.load(f)
+            if isinstance(v, dict) and isinstance(v.get("lists"), dict):
+                return v
+    except Exception:
+        pass
+    return {"lists": {}}
+
+
+def _lists_save(data):
+    tmp = _LISTS_FILE + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(data, f)
+    os.replace(tmp, _LISTS_FILE)
+
+
+def _list_summary(l):
+    return {
+        "id": l["id"],
+        "name": l.get("name") or "",
+        "kind": l.get("kind") or "manual",
+        "query": l.get("query") or "",
+        "created": l.get("created") or 0,
+        "count": len(l.get("items") or []),
+        # which articles it holds, so the reader can tick the lists an article is in
+        "ids": [i.get("id") for i in l.get("items") or []],
+    }
+
+
+def lists_all():
+    with _lists_lock:
+        data = _lists_load()
+    ls = sorted(data["lists"].values(), key=lambda l: l.get("created") or 0)
+    return {"lists": [_list_summary(l) for l in ls]}
+
+
+def _feed_matches(term, index, limit=40):
+    """Articles from your own feeds (the recommender's corpus of recent FreshRSS items) that
+    mention every word of the term."""
+    words = [w for w in re.findall(r"\w+", term.lower()) if len(w) > 1]
+    if not words:
+        return []
+    out = []
+    for a in index.get("articles") or []:
+        if not a.get("id"):
+            continue  # an external feed's item, not one of yours
+        hay = f"{a.get('title') or ''} {a.get('text') or ''}".lower()
+        if all(w in hay for w in words):
+            out.append({
+                "id": a["id"],
+                "title": a.get("title") or "",
+                "link": a.get("link") or "",
+                "image": a.get("imageUrl"),
+                "source": a.get("feedTitle") or "",
+                "host": a.get("source") or "",
+                "published": a.get("publishedAt") or 0,
+                "html": a.get("contentHtml") or "",
+                "excerpt": (a.get("text") or "")[:400],
+                "author": a.get("author") or "",
+                "fromFeeds": True,
+            })
+    out.sort(key=lambda i: i["published"] or 0, reverse=True)
+    return out[:limit]
+
+
+def list_get(list_id, index):
+    with _lists_lock:
+        l = _lists_load()["lists"].get(list_id)
+    if not l:
+        return None
+    out = _list_summary(l)
+    if out["kind"] == "search":
+        web = news_search(out["query"])
+        out["items"] = _feed_matches(out["query"], index) + web.get("items", [])
+        out["pending"] = web.get("pending", 0)
+    else:
+        out["items"] = l.get("items") or []
+    return out
+
+
+def list_put(list_id, body):
+    """Create or change a list ({name, kind, query}), or delete it (null)."""
+    if not _LIST_ID.match(list_id or ""):
+        raise ValueError("bad list id")
+    with _lists_lock:
+        data = _lists_load()
+        if body is None:
+            data["lists"].pop(list_id, None)
+        else:
+            l = data["lists"].get(list_id) or {"id": list_id, "created": int(time.time() * 1000), "items": []}
+            if "name" in body:
+                l["name"] = str(body["name"])[:80]
+            if "kind" in body and body["kind"] in ("manual", "search", "stars"):
+                l["kind"] = body["kind"]
+            if "query" in body:
+                l["query"] = str(body["query"] or "")[:120]
+            l.setdefault("kind", "manual")
+            data["lists"][list_id] = l
+        _lists_save(data)
+    return lists_all()
+
+
+def list_items_put(list_id, body):
+    """{"add": article} (a copy is kept, newest first; the list is made if it's "stars") or
+    {"remove": article id}."""
+    if not _LIST_ID.match(list_id or ""):
+        raise ValueError("bad list id")
+    with _lists_lock:
+        data = _lists_load()
+        l = data["lists"].get(list_id)
+        if l is None:
+            if list_id != "stars":
+                raise ValueError("no such list")
+            l = data["lists"]["stars"] = {"id": "stars", "name": "Starred", "kind": "stars", "created": 0, "items": []}
+        items = l.setdefault("items", [])
+        if isinstance(body.get("add"), dict):
+            snap = {k: body["add"][k] for k in _SNAPSHOT_KEYS if k in body["add"]}
+            if not snap.get("id"):
+                raise ValueError("article without an id")
+            snap["html"] = str(snap.get("html") or "")[:200_000]
+            snap["saved"] = int(time.time() * 1000)
+            items[:] = [snap] + [i for i in items if i.get("id") != snap["id"]]
+            del items[LIST_MAX_ITEMS:]
+        elif body.get("remove"):
+            items[:] = [i for i in items if i.get("id") != body["remove"]]
+        _lists_save(data)
+        return _list_summary(l)
 
 
 PAGE_MAX_BYTES = 6 * 1024 * 1024
@@ -2193,8 +2361,21 @@ def make_handler(indexer, opts):
             # settings (the local-news place), so every device sees the same
             try:
                 path = urllib.parse.urlparse(self.path).path.rstrip("/")
-                m = re.match(r"^/prefs/([a-z0-9-]{1,40})$", path)
                 n = int(self.headers.get("Content-Length") or 0)
+                # lists: PUT /lists/<id> {name, kind, query} or null; PUT /lists/<id>/items
+                # {"add": article} or {"remove": id}
+                m = re.match(r"^/lists/([a-z0-9-]{1,40})(/items)?$", path)
+                if m:
+                    if n > 1_000_000:
+                        self._send_json({"error": "too big"}, status=413)
+                        return
+                    body = json.loads(self.rfile.read(n) or b"null")
+                    if m.group(2):
+                        self._send_json(list_items_put(m.group(1), body or {}))
+                    else:
+                        self._send_json(list_put(m.group(1), body))
+                    return
+                m = re.match(r"^/prefs/([a-z0-9-]{1,40})$", path)
                 if not m or n > 10_000:
                     self._send_json({"error": "bad request"}, status=400)
                     return
@@ -2266,6 +2447,20 @@ def make_handler(indexer, opts):
 
                 if path == "/prefs":
                     self._send_json(prefs_read())
+                    return
+
+                if path == "/lists":
+                    self._send_json(lists_all())
+                    return
+
+                m = re.match(r"^/lists/([a-z0-9-]{1,40})$", path)
+                if m:
+                    got = list_get(m.group(1), idx)
+                    self._send_json(got if got else {"error": "no such list"}, status=200 if got else 404)
+                    return
+
+                if path == "/news/search":
+                    self._send_json(news_search((qs.get("q") or [""])[0]))
                     return
 
                 if path == "/tumblr":
