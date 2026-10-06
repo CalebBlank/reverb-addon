@@ -47,6 +47,7 @@ DEFAULTS = {
     # account password). Blank = HN-only discussions. Handle e.g. "name.bsky.social".
     "bluesky_handle": "",
     "bluesky_app_password": "",
+    "tumblr_api_key": "",
 }
 
 # How many of the newest items to keep PER external feed, so the combined corpus
@@ -1373,8 +1374,62 @@ def _tumblr_item(blog, p):
     }
 
 
+def _tumblr_v2_as_v1(p):
+    """A post from the official API (v2, legacy format) in the old read API's shape, so one
+    parser (_tumblr_item) reads both."""
+    kind = p.get("type")
+    out = {
+        "id": p.get("id_string") or p.get("id"),
+        "url": p.get("post_url"),
+        "unix-timestamp": p.get("timestamp") or 0,
+        "tags": p.get("tags") or [],
+    }
+    if kind == "photo":
+        photos = []
+        for ph in p.get("photos") or []:
+            big = ph.get("original_size") or {}
+            sizes = [s for s in ph.get("alt_sizes") or [] if (s.get("width") or 0) <= 500]
+            small = max(sizes, key=lambda s: s.get("width") or 0) if sizes else big
+            photos.append({"photo-url-1280": big.get("url"), "width": big.get("width"), "height": big.get("height"), "photo-url-500": small.get("url")})
+        out.update(type="photo", photos=photos, **{"photo-caption": p.get("caption") or ""})
+    elif kind in ("text", "answer", "chat"):
+        body = p.get("body") or p.get("answer") or ""
+        out.update(type="regular", **{"regular-body": body, "regular-title": p.get("title") or ""})
+    elif kind == "quote":
+        out.update(type="quote", **{"quote-text": p.get("text") or "", "quote-source": p.get("source") or ""})
+    elif kind == "link":
+        out.update(type="link", **{"link-url": p.get("url") or "", "link-text": p.get("title") or "", "link-description": p.get("description") or ""})
+    elif kind == "video":
+        players = p.get("player") or []
+        embed = players[-1].get("embed_code") if players and isinstance(players[-1], dict) else ""
+        out.update(type="video", **{"video-player": embed or "", "video-caption": p.get("caption") or ""})
+    else:
+        out["type"] = kind
+    return out
+
+
+def _tumblr_v2_page(blog, start, api_key):
+    """Posts start..start+50 from Tumblr's official API (20 a request, so up to three)."""
+    posts, total = [], 0
+    for offset in range(start, start + TUMBLR_PAGE, 20):
+        limit = min(20, start + TUMBLR_PAGE - offset)
+        url = f"https://api.tumblr.com/v2/blog/{blog}.tumblr.com/posts?api_key={urllib.parse.quote(api_key)}&offset={offset}&limit={limit}"
+        req = urllib.request.Request(url, headers={"User-Agent": _FETCH_UA})
+        with urllib.request.urlopen(req, timeout=20) as resp:
+            data = json.loads(resp.read().decode("utf-8", "replace")).get("response") or {}
+        batch = data.get("posts") or []
+        total = int(data.get("total_posts") or (data.get("blog") or {}).get("total_posts") or total or 0)
+        posts += [_tumblr_v2_as_v1(p) for p in batch]
+        if len(batch) < limit:
+            break
+        time.sleep(0.3)
+    return posts, total
+
+
 def tumblr_page(blog, start):
-    """{"total", "start", "items": [...]} for posts start..start+50, newest first."""
+    """{"total", "start", "items": [...]} for posts start..start+50, newest first. Through
+    Tumblr's official API when the add-on has a key (tumblr_api_key), else the old read API,
+    which Tumblr now challenges from most connections."""
     blog = (blog or "").strip().lower()
     if not _TUMBLR_NAME.match(blog):
         return {"error": "bad blog name", "total": 0, "start": start, "items": []}
@@ -1384,7 +1439,22 @@ def tumblr_page(blog, start):
         hit = _tumblr_cache.get(key)
     if hit and (start > 0 or now - hit[0] < TUMBLR_FRESH):
         return hit[1]
-    url = f"https://{blog}.tumblr.com/api/read/json?start={start}&num={TUMBLR_PAGE}"
+    api_key = str(load_options().get("tumblr_api_key") or "").strip()
+    if api_key:
+        try:
+            posts, total = _tumblr_v2_page(blog, start, api_key)
+        except urllib.error.HTTPError as e:
+            if e.code == 429:
+                return {"error": "tumblr: rate limited", "retryAfter": 60, "total": 0, "start": start, "items": []}
+            return {"error": f"tumblr: {e}", "total": 0, "start": start, "items": []}
+        except Exception as e:
+            return {"error": f"tumblr: {e}", "total": 0, "start": start, "items": []}
+        items = [i for i in (_tumblr_item(blog, p) for p in posts) if i]
+        payload = {"total": total, "start": start, "items": items}
+        with _tumblr_lock:
+            _tumblr_cache[key] = (now, payload)
+        return payload
+    url =f"https://{blog}.tumblr.com/api/read/json?start={start}&num={TUMBLR_PAGE}"
     req = urllib.request.Request(url, headers={"User-Agent": _FETCH_UA})
     # Tumblr rate-limits bursts (HTTP 429): one request at a time, a breath apart
     global _tumblr_last

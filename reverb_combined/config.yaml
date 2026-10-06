@@ -1,5 +1,5 @@
 name: Reverb
-version: "1.1.19"
+version: "1.1.20"
 slug: reverb
 description: >-
   Reverb web reader + recommender in one add-on. Serves the web RSS reader over
@@ -42,6 +42,9 @@ options:
   # the read-aloud server (Pocket TTS, C:\reverb-tts on the Windows box), reached by the web
   # reader same-origin at tts/; blank turns read-aloud off
   tts_upstream: "http://192.168.0.110:8102"
+  # Tumblr's official API key (the OAuth consumer key of an app at tumblr.com/oauth/apps):
+  # scrolling past a Tumblr feed's RSS into the blog's older posts. Blank tries the old API
+  tumblr_api_key: ""
 schema:
   freshrss_upstream: str
   username: str
@@ -53,3 +56,4 @@ schema:
   bluesky_handle: str?
   bluesky_app_password: password?
   tts_upstream: str?
+  tumblr_api_key: password?
