@@ -1,5 +1,5 @@
 name: Reverb
-version: "1.0.16"
+version: "1.1.0"
 slug: reverb
 description: >-
   Reverb web reader + recommender in one add-on. Serves the web RSS reader over
@@ -39,6 +39,9 @@ options:
   external_feeds: ""
   bluesky_handle: ""
   bluesky_app_password: ""
+  # the read-aloud server (Pocket TTS, C:\reverb-tts on the Windows box), reached by the web
+  # reader same-origin at tts/; blank turns read-aloud off
+  tts_upstream: "http://192.168.0.110:8102"
 schema:
   freshrss_upstream: str
   username: str
@@ -49,3 +52,4 @@ schema:
   external_feeds: str?
   bluesky_handle: str?
   bluesky_app_password: password?
+  tts_upstream: str?

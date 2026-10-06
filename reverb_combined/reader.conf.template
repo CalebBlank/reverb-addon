@@ -13,7 +13,17 @@ server {
         proxy_pass ${RECOMMENDER_UPSTREAM}/;
         proxy_http_version 1.1;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_read_timeout 15s;
+        proxy_read_timeout 25s;
+    }
+
+    # Read aloud: the Pocket TTS server (tts_upstream). One sentence per request; synthesis
+    # takes a few seconds on a busy CPU, so the read timeout is generous.
+    location /tts/ {
+        proxy_pass ${TTS_UPSTREAM}/;
+        proxy_http_version 1.1;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_connect_timeout 5s;
+        proxy_read_timeout 90s;
     }
 
     # The self-contained web reader (single index.html). no-cache => the browser revalidates

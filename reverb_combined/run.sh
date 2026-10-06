@@ -19,7 +19,14 @@ fi
 # recommender_upstream option anymore — that whole config footgun is gone.
 export FRESHRSS_UPSTREAM="$UPSTREAM"
 export RECOMMENDER_UPSTREAM="http://127.0.0.1:8100"
-envsubst '${FRESHRSS_UPSTREAM} ${RECOMMENDER_UPSTREAM}' \
+# read aloud (tts_upstream); when blank, a dead local port so tts/ fails fast
+TTS=""
+if [ -f "$OPTIONS" ]; then
+    TTS=$(jq -r '.tts_upstream // ""' "$OPTIONS")
+fi
+TTS="${TTS%/}"
+export TTS_UPSTREAM="${TTS:-http://127.0.0.1:9}"
+envsubst '${FRESHRSS_UPSTREAM} ${RECOMMENDER_UPSTREAM} ${TTS_UPSTREAM}' \
     < /etc/nginx/reader.conf.template \
     > /etc/nginx/conf.d/default.conf
 
@@ -31,4 +38,5 @@ python3 /app.py &
 echo "[reverb] web reader on ingress :8099"
 echo "[reverb]   /api/  -> ${FRESHRSS_UPSTREAM}/api/   (FreshRSS)"
 echo "[reverb]   /recs/ -> ${RECOMMENDER_UPSTREAM}/    (local recommender)"
+echo "[reverb]   /tts/  -> ${TTS_UPSTREAM}/    (read aloud)"
 exec nginx -g 'daemon off;'

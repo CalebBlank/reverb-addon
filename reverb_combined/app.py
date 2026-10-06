@@ -15,7 +15,9 @@ import email.utils
 import html
 import json
 import math
+import ipaddress
 import re
+import socket
 import sys
 import threading
 import time
@@ -80,12 +82,12 @@ _FETCH_UA = (
 CATALOG = [
     # ── design ──
     ("https://www.yankodesign.com/feed/", "Yanko Design", "design"),
-    ("https://www.designweek.co.uk/feed/", "Design Week", "design"),
+    ("https://designobserver.com/feed/", "Design Observer", "design"),
     ("https://www.creativebloq.com/feed", "Creative Bloq", "design"),
-    ("https://eyeondesign.aiga.org/feed/", "AIGA Eye on Design", "design"),
+    ("https://coolhunting.com/feed/", "Cool Hunting", "design"),
     ("https://www.sightunseen.com/feed/", "Sight Unseen", "design"),
     ("https://www.printmag.com/feed/", "PRINT Magazine", "design"),
-    ("https://www.underconsideration.com/brandnew/atom.xml", "Brand New", "design"),
+    ("https://mindsparklemag.com/feed/", "Mindsparkle Mag", "design"),
     ("https://www.dezeen.com/feed/", "Dezeen", "design"),
     ("https://www.core77.com/feed", "Core77", "design"),
     ("https://www.designboom.com/feed/", "designboom", "design"),
@@ -95,12 +97,12 @@ CATALOG = [
     ("https://www.fastcompany.com/section/design/rss", "Fast Company Design", "design"),
     # ── art ──
     ("https://hyperallergic.com/feed/", "Hyperallergic", "art"),
-    ("https://news.artnet.com/feed", "Artnet News", "art"),
+    ("https://artdaily.com/rss.asp", "Artdaily", "art"),
     ("https://www.artnews.com/feed/", "ARTnews", "art"),
     ("https://www.juxtapoz.com/feed/", "Juxtapoz", "art"),
     ("https://www.booooooom.com/feed/", "Booooooom", "art"),
     ("https://www.artforum.com/feed/", "Artforum", "art"),
-    ("https://aestheticamagazine.com/feed/", "Aesthetica", "art"),
+    ("https://elephant.art/feed/", "Elephant", "art"),
     ("https://www.thisiscolossal.com/feed/", "Colossal", "art"),
     ("https://www.artsy.net/rss/news", "Artsy", "art"),
     ("https://www.theartnewspaper.com/rss.xml", "The Art Newspaper", "art"),
@@ -130,17 +132,17 @@ CATALOG = [
     ("https://techcrunch.com/feed/", "TechCrunch", "technology"),
     ("https://www.engadget.com/rss.xml", "Engadget", "technology"),
     ("https://www.technologyreview.com/feed/", "MIT Technology Review", "technology"),
-    ("https://www.theregister.com/headlines.atom", "The Register", "technology"),
+    ("https://spectrum.ieee.org/feeds/feed.rss", "IEEE Spectrum", "technology"),
     ("https://www.theverge.com/rss/index.xml", "The Verge", "technology"),
     ("https://feeds.arstechnica.com/arstechnica/index", "Ars Technica", "technology"),
     ("https://hnrss.org/frontpage", "Hacker News", "technology"),
-    ("https://gizmodo.com/rss", "Gizmodo", "technology"),
+    ("https://www.404media.co/rss/", "404 Media", "technology"),
     # ── science ──
     ("https://api.quantamagazine.org/feed/", "Quanta Magazine", "science"),
     ("https://www.sciencedaily.com/rss/all.xml", "ScienceDaily", "science"),
     ("https://www.scientificamerican.com/platform/syndication/rss/", "Scientific American", "science"),
     ("https://www.sciencenews.org/feed", "Science News", "science"),
-    ("https://www.nature.com/nature.rss", "Nature", "science"),
+    ("https://knowablemagazine.org/rss", "Knowable Magazine", "science"),
     ("https://phys.org/rss-feed/", "Phys.org", "science"),
     ("https://nautil.us/feed/", "Nautilus", "science"),
     ("https://www.newscientist.com/section/news/feed/", "New Scientist", "science"),
@@ -1244,6 +1246,61 @@ def _norm_url(u):
         return (u or "").strip().lower()
 
 
+PAGE_MAX_BYTES = 6 * 1024 * 1024
+
+
+def _public_host(host):
+    """True when every address the host resolves to is public: /page must not reach the LAN."""
+    try:
+        infos = socket.getaddrinfo(host, None)
+    except OSError:
+        return False
+    for info in infos:
+        ip = ipaddress.ip_address(info[4][0])
+        if not ip.is_global:
+            return False
+    return bool(infos)
+
+
+class _PublicOnlyRedirects(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        p = urllib.parse.urlparse(newurl)
+        if p.scheme not in ("http", "https") or not p.hostname or not _public_host(p.hostname):
+            raise urllib.error.HTTPError(newurl, 403, "redirect to a non-public address", headers, fp)
+        return super().redirect_request(req, fp, code, msg, headers, newurl)
+
+
+_page_opener = urllib.request.build_opener(_PublicOnlyRedirects)
+
+
+def fetch_page(url, timeout=15):
+    """(status, content type, body) of a public web page, for the reader's Full view."""
+    p = urllib.parse.urlparse(url or "")
+    if p.scheme not in ("http", "https") or not p.hostname:
+        return 400, "text/plain", b"bad url"
+    if not _public_host(p.hostname):
+        return 403, "text/plain", b"not a public address"
+    req = urllib.request.Request(url, headers={
+        "User-Agent": _FETCH_UA,
+        "Accept": "text/html,application/xhtml+xml;q=0.9,*/*;q=0.8",
+        "Accept-Language": "en-US,en;q=0.9",
+    })
+    try:
+        with _page_opener.open(req, timeout=timeout) as resp:
+            body = resp.read(PAGE_MAX_BYTES + 1)
+            if len(body) > PAGE_MAX_BYTES:
+                return 413, "text/plain", b"page too large"
+            ctype = resp.headers.get("Content-Type") or "text/html"
+            if resp.headers.get("Content-Encoding") == "gzip":
+                import gzip
+                body = gzip.decompress(body)
+            return 200, ctype, body
+    except urllib.error.HTTPError as e:
+        return 502, "text/plain", f"upstream {e.code}".encode()
+    except Exception as e:
+        return 502, "text/plain", f"fetch failed: {e}".encode()
+
+
 def fetch_hn_discussions(url, timeout=8):
     """Hacker News submissions whose story URL matches `url` (Algolia search API)."""
     try:
@@ -1522,6 +1579,19 @@ def make_handler(indexer, opts):
                     # if configured). Independent of the corpus.
                     link = (qs.get("link") or [None])[0]
                     self._send_json(discussions_payload(link, opts))
+                    return
+
+                if path == "/page":
+                    # The original article page, fetched server-side for the web reader's
+                    # "Full" view (browsers can't read other sites' pages: CORS).
+                    url = (qs.get("url") or [""])[0]
+                    status, ctype, body = fetch_page(url)
+                    self.send_response(status)
+                    self.send_header("Content-Type", ctype)
+                    self.send_header("Content-Length", str(len(body)))
+                    self.send_header("Access-Control-Allow-Origin", "*")
+                    self.end_headers()
+                    self.wfile.write(body)
                     return
 
                 if path == "/featured":
