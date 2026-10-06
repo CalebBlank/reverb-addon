@@ -1511,11 +1511,34 @@ def news_top():
             return outlets * 3 - hours / 6
 
         stories.sort(key=score, reverse=True)
+        # the stories several outlets tell lead; the rest take turns by outlet, each outlet's
+        # in its own order, so one busy feed can't fill the row
+        shared = [s for s in stories if len({o for o, _ in s["items"]}) > 1]
+        queues = {}
+        for s in stories:
+            if len({o for o, _ in s["items"]}) == 1:
+                queues.setdefault(s["items"][0][0], []).append(s)
+        picked = shared[:NEWS_COUNT]
+        while len(picked) < NEWS_COUNT and any(queues.values()):
+            for q in queues.values():
+                if q and len(picked) < NEWS_COUNT:
+                    picked.append(q.pop(0))
         items = []
-        for s in stories[:NEWS_COUNT]:
+        for s in picked:
             # the story's card: the outlet with a picture, else the first
             outlet, a = next(((o, x) for o, x in s["items"] if x.get("imageUrl")), s["items"][0])
             items.append(_news_item(a, outlet, {"outlets": sorted({o for o, _ in s["items"]})}))
+        # feeds without pictures (the Guardian's, Al Jazeera's): the page's own og:image
+        bare = [it for it in items if not it["image"] and it["link"]]
+
+        def find_image(it):
+            it["image"] = _og_image(it["link"])
+
+        threads = [threading.Thread(target=find_image, args=(it,), daemon=True) for it in bare]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join(12)
         return {"items": items}
 
     return _news_cached("top", build)
