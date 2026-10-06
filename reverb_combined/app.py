@@ -2013,6 +2013,8 @@ def _list_summary(l):
         "count": len(l.get("items") or []),
         # which articles it holds, so the reader can tick the lists an article is in
         "ids": [i.get("id") for i in l.get("items") or []],
+        # and their links: the Android app keys articles by link, not by FreshRSS id
+        "links": [i.get("link") for i in l.get("items") or []],
     }
 
 
