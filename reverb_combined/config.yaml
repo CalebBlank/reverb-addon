@@ -1,5 +1,5 @@
 name: Reverb
-version: "1.1.23"
+version: "1.1.24"
 slug: reverb
 description: >-
   Reverb web reader + recommender in one add-on. Serves the web RSS reader over
@@ -45,6 +45,9 @@ options:
   # Tumblr's official API key (the OAuth consumer key of an app at tumblr.com/oauth/apps):
   # scrolling past a Tumblr feed's RSS into the blog's older posts. Blank tries the old API
   tumblr_api_key: ""
+  # FreshRSS's token for unauthenticated access (Settings > Authentication): lets saved
+  # searches search your feeds' whole history. Blank searches only the recent articles
+  freshrss_token: ""
 schema:
   freshrss_upstream: str
   username: str
@@ -57,3 +60,4 @@ schema:
   bluesky_app_password: password?
   tts_upstream: str?
   tumblr_api_key: password?
+  freshrss_token: password?

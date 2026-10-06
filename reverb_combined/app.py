@@ -48,6 +48,7 @@ DEFAULTS = {
     "bluesky_handle": "",
     "bluesky_app_password": "",
     "tumblr_api_key": "",
+    "freshrss_token": "",
 }
 
 # How many of the newest items to keep PER external feed, so the combined corpus
@@ -1153,6 +1154,47 @@ class Indexer:
         with urllib.request.urlopen(req, timeout=20) as resp:
             return resp.read().decode("utf-8", "replace")
 
+    def search(self, term, limit=60):
+        """Your feeds' articles matching `term`, from FreshRSS's whole history, newest first.
+        The Google Reader API can't search, but FreshRSS's own RSS output can (with the
+        freshrss_token option, its "token for unauthenticated access"): it names the matching
+        entries, and the API then loads them as ordinary items. None when there's no token."""
+        opts = load_options()
+        token = str(opts.get("freshrss_token") or "").strip()
+        if not token or not opts.get("username"):
+            return None
+        q = urllib.parse.urlencode({"a": "rss", "user": opts["username"], "token": token, "search": term, "nb": limit, "get": "a"})
+        url = opts["freshrss_upstream"].rstrip("/") + "/i/?" + q
+        with urllib.request.urlopen(url, timeout=30) as resp:
+            xml_text = resp.read().decode("utf-8", "replace")
+        # each <guid> is FreshRSS's entry id; the API's item id is it in 16 hex digits
+        ids = []
+        for g in re.findall(r"<guid[^>]*>\s*(\d+)\s*</guid>", xml_text):
+            ids.append("tag:google.com,2005:reader/item/%016x" % int(g))
+        if not ids:
+            return []
+        if not self._token:
+            self._token = self._login()
+        body = "&".join("i=" + urllib.parse.quote(i, safe="") for i in ids).encode("utf-8")
+
+        def load():
+            req = urllib.request.Request(self.base.rstrip("/") + "/reader/api/0/stream/items/contents?output=json", data=body, method="POST")
+            req.add_header("Authorization", "GoogleLogin auth=" + (self._token or ""))
+            req.add_header("Content-Type", "application/x-www-form-urlencoded")
+            with urllib.request.urlopen(req, timeout=30) as resp:
+                return resp.read().decode("utf-8", "replace")
+
+        try:
+            raw = load()
+        except urllib.error.HTTPError as e:
+            if e.code != 401:
+                raise
+            self._token = self._login()
+            raw = load()
+        articles = parse_items(raw)
+        articles.sort(key=lambda a: a.get("publishedAt") or 0, reverse=True)
+        return articles
+
     def _fetch_articles(self):
         """Log in if needed, fetch the reading-list, parse → list of articles.
         Handles a 401 by re-logging in once. Returns [] on failure/empty."""
@@ -1993,24 +2035,29 @@ def _feed_matches(term, index, limit=40):
             continue  # an external feed's item, not one of yours
         hay = f"{a.get('title') or ''} {a.get('text') or ''}".lower()
         if all(w in hay for w in words):
-            out.append({
-                "id": a["id"],
-                "title": a.get("title") or "",
-                "link": a.get("link") or "",
-                "image": a.get("imageUrl"),
-                "source": a.get("feedTitle") or "",
-                "host": a.get("source") or "",
-                "published": a.get("publishedAt") or 0,
-                "html": a.get("contentHtml") or "",
-                "excerpt": (a.get("text") or "")[:400],
-                "author": a.get("author") or "",
-                "fromFeeds": True,
-            })
+            out.append(_feed_match(a))
     out.sort(key=lambda i: i["published"] or 0, reverse=True)
     return out[:limit]
 
 
-def list_get(list_id, index):
+def _feed_match(a):
+    """One of your articles (parse_items' shape) as a saved search's item."""
+    return {
+        "id": a["id"],
+        "title": a.get("title") or "",
+        "link": a.get("link") or "",
+        "image": a.get("imageUrl"),
+        "source": a.get("feedTitle") or "",
+        "host": a.get("source") or "",
+        "published": a.get("publishedAt") or 0,
+        "html": a.get("contentHtml") or "",
+        "excerpt": (a.get("text") or "")[:400],
+        "author": a.get("author") or "",
+        "fromFeeds": True,
+    }
+
+
+def list_get(list_id, indexer):
     with _lists_lock:
         l = _lists_load()["lists"].get(list_id)
     if not l:
@@ -2018,7 +2065,15 @@ def list_get(list_id, index):
     out = _list_summary(l)
     if out["kind"] == "search":
         web = news_search(out["query"])
-        out["items"] = _feed_matches(out["query"], index) + web.get("items", [])
+        # your feeds: FreshRSS's whole history when it can be searched (freshrss_token), else
+        # the recent articles the recommender holds
+        try:
+            found = indexer.search(out["query"])
+        except Exception as e:
+            print(f"[lists] FreshRSS search failed ({e}); using the recent corpus", flush=True)
+            found = None
+        mine = [_feed_match(a) for a in found if a.get("id")] if found is not None else _feed_matches(out["query"], indexer.index)
+        out["items"] = mine + web.get("items", [])
         out["pending"] = web.get("pending", 0)
     else:
         out["items"] = l.get("items") or []
@@ -2455,7 +2510,7 @@ def make_handler(indexer, opts):
 
                 m = re.match(r"^/lists/([a-z0-9-]{1,40})$", path)
                 if m:
-                    got = list_get(m.group(1), idx)
+                    got = list_get(m.group(1), indexer)
                     self._send_json(got if got else {"error": "no such list"}, status=200 if got else 404)
                     return
 
