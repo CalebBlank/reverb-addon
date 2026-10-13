@@ -1,5 +1,5 @@
 name: Reverb
-version: "1.1.33"
+version: "1.1.34"
 slug: reverb
 description: >-
   Reverb web reader + recommender in one add-on. Serves the web RSS reader over
@@ -34,6 +34,9 @@ options:
   username: ""
   api_password: ""
   refresh_minutes: 20
+  # how often FreshRSS fetches every feed (its own cron only does every 20 min); needs
+  # freshrss_token. Pull-to-refresh in the apps also fetches at once (GET /fetch)
+  fetch_minutes: 5
   corpus_size: 1000
   k_default: 8
   external_feeds: ""
@@ -53,6 +56,7 @@ schema:
   username: str
   api_password: password
   refresh_minutes: int(1,)
+  fetch_minutes: int(1,)?
   corpus_size: int(10,)
   k_default: int(1,50)
   external_feeds: str?

@@ -40,6 +40,8 @@ DEFAULTS = {
     "username": "",
     "api_password": "",
     "refresh_minutes": 20,
+    # how often FreshRSS is asked to fetch every feed (needs freshrss_token)
+    "fetch_minutes": 5,
     "corpus_size": 300,
     "k_default": 8,
     "external_feeds": "",
@@ -1086,7 +1088,7 @@ def load_options():
     except Exception as e:
         print(f"[recommender] failed to read options: {e}", flush=True)
     # coerce numeric options
-    for key in ("refresh_minutes", "corpus_size", "k_default"):
+    for key in ("refresh_minutes", "fetch_minutes", "corpus_size", "k_default"):
         try:
             opts[key] = int(opts[key])
         except Exception:
@@ -1285,6 +1287,98 @@ class Indexer:
         interval = max(1, self.opts["refresh_minutes"]) * 60
         while True:
             self.refresh()
+            time.sleep(interval)
+
+    # ---- making FreshRSS fetch the sites now ----
+    # FreshRSS's own cron only fetches every 20 minutes, and its actualize URL without a feed id
+    # skips every feed fetched within its TTL. Naming each feed bypasses that, so this asks for
+    # all of them, 16 at a time (each takes 0.2-0.5 s). Runs every fetch_minutes, and on demand
+    # from the apps' pull-to-refresh (GET /fetch), which shares a run already going or just done.
+
+    _fetch_lock = threading.Lock()
+    _fetch_last = None  # (finished epoch, result)
+
+    def _subscription_ids(self):
+        def get():
+            req = urllib.request.Request(self.base.rstrip("/") + "/reader/api/0/subscription/list?output=json")
+            req.add_header("Authorization", "GoogleLogin auth=" + (self._token or ""))
+            with urllib.request.urlopen(req, timeout=20) as resp:
+                return json.loads(resp.read().decode("utf-8", "replace"))
+
+        if not self._token:
+            self._token = self._login()
+        try:
+            data = get()
+        except (urllib.error.HTTPError, ValueError):
+            # 401, or FreshRSS's 200 'Unauthorized' body for a stale token
+            self._token = self._login()
+            data = get()
+        ids = []
+        for s in data.get("subscriptions") or []:
+            sid = str(s.get("id") or "")
+            if sid.startswith("feed/") and sid[5:].isdigit():
+                ids.append(sid[5:])
+        return ids
+
+    def fetch_feeds(self, fresh_within=30):
+        """FreshRSS fetches every feed now. Answers {ok, feeds, failed, ms}, or {ok: False, error}."""
+        last = Indexer._fetch_last
+        if last and time.time() - last[0] < fresh_within:
+            return last[1]
+        with Indexer._fetch_lock:
+            # a run that finished while we waited for the lock answers for us too
+            last = Indexer._fetch_last
+            if last and time.time() - last[0] < fresh_within:
+                return last[1]
+            opts = load_options()
+            token = str(opts.get("freshrss_token") or "").strip()
+            if not token or not opts.get("username"):
+                return {"ok": False, "error": "set freshrss_token (FreshRSS's master authentication token)"}
+            started = time.time()
+            try:
+                ids = self._subscription_ids()
+            except Exception as e:
+                return {"ok": False, "error": f"subscriptions: {e}"}
+            base = opts["freshrss_upstream"].rstrip("/") + "/i/?"
+            failed = []
+
+            def one(feed_id):
+                q = urllib.parse.urlencode({"c": "feed", "a": "actualize", "id": feed_id, "ajax": 1, "user": opts["username"], "token": token})
+                try:
+                    with urllib.request.urlopen(base + q, timeout=45) as resp:
+                        resp.read()
+                except Exception:
+                    failed.append(feed_id)
+
+            pending = list(ids)
+            lock = threading.Lock()
+
+            def worker():
+                while True:
+                    with lock:
+                        if not pending:
+                            return
+                        feed_id = pending.pop()
+                    one(feed_id)
+
+            threads = [threading.Thread(target=worker, daemon=True) for _ in range(16)]
+            for t in threads:
+                t.start()
+            for t in threads:
+                t.join()
+            result = {"ok": True, "feeds": len(ids), "failed": len(failed), "ms": int((time.time() - started) * 1000)}
+            Indexer._fetch_last = (time.time(), result)
+            return result
+
+    def fetch_loop(self):
+        interval = max(1, int(self.opts.get("fetch_minutes") or 5)) * 60
+        while True:
+            try:
+                r = self.fetch_feeds()
+                if not r.get("ok"):
+                    print(f"[recommender] feed fetch: {r.get('error')}", flush=True)
+            except Exception as e:
+                print(f"[recommender] feed fetch failed ({e})", flush=True)
             time.sleep(interval)
 
 
@@ -2629,6 +2723,12 @@ def make_handler(indexer, opts):
                     self.wfile.write(body)
                     return
 
+                if path == "/fetch":
+                    # Pull-to-refresh: FreshRSS fetches every feed now (a few seconds), then the
+                    # app syncs as usual and finds what just arrived
+                    self._send_json(indexer.fetch_feeds())
+                    return
+
                 if path == "/featured":
                     # Background-computed home-carousel picks (recency + richness blended with
                     # Bluesky engagement). Cached on the indexer; recomputed each refresh.
@@ -2649,6 +2749,7 @@ def main():
     indexer = Indexer(opts)
     t = threading.Thread(target=indexer.loop, daemon=True)
     t.start()
+    threading.Thread(target=indexer.fetch_loop, daemon=True).start()
     server = ThreadingHTTPServer(("0.0.0.0", PORT), make_handler(indexer, opts))
     try:
         server.serve_forever()
