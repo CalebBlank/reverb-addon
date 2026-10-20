@@ -1,5 +1,5 @@
-name: Reverb
-version: "1.1.35"
+﻿name: Reverb
+version: "1.1.36"
 slug: reverb
 description: >-
   Reverb web reader + recommender in one add-on. Serves the web RSS reader over
@@ -25,7 +25,7 @@ ports_description:
   "8100/tcp": Recommender API for the Reverb Android app (GET /related, /catalog, /discussions, /health)
 # One shared config for both halves.
 #   freshrss_upstream: the FreshRSS add-on base URL (SAME host:port as Reverb, WITHOUT
-#     /api/greader.php), e.g. http://192.168.1.50:7077 — used by both the /api/ proxy and
+#     /api/greader.php), e.g. http://192.168.1.50:7077 â€” used by both the /api/ proxy and
 #     the recommender's server-side fetch.
 #   username / api_password: FreshRSS API creds (the recommender logs in server-side).
 #   bluesky_*: optional app-password creds for the article "Discussions" feature (HN-only if blank).
