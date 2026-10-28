@@ -12,7 +12,7 @@ COPY run.sh /run.sh
 RUN chmod +x /run.sh
 
 # Recommender API for the Android app.
-EXPOSE 8100
+EXPOSE 8100 8102
 
 # Bypass the stock nginx entrypoint (it would envsubst before our option is read).
 ENTRYPOINT ["/run.sh"]

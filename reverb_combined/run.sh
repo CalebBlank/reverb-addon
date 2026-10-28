@@ -35,7 +35,7 @@ envsubst '${FRESHRSS_UPSTREAM} ${RECOMMENDER_UPSTREAM} ${TTS_UPSTREAM}' \
 echo "[reverb] starting recommender on :8100"
 python3 /app.py &
 
-echo "[reverb] web reader on ingress :8099"
+echo "[reverb] web reader on ingress :8099 and directly on :8102"
 echo "[reverb]   /api/  -> ${FRESHRSS_UPSTREAM}/api/   (FreshRSS)"
 echo "[reverb]   /recs/ -> ${RECOMMENDER_UPSTREAM}/    (local recommender)"
 echo "[reverb]   /tts/  -> ${TTS_UPSTREAM}/    (read aloud)"

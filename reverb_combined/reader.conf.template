@@ -1,5 +1,8 @@
 server {
+    # 8099 = HA ingress (HA login); 8102 = the same reader on the LAN, no HA login.
+    # One server block, so both ports get the identical /api/, /recs/ and /tts/ proxies.
     listen 8099;
+    listen 8102;
     server_name _;
 
     root /usr/share/nginx/html;

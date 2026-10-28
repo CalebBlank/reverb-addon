@@ -1,5 +1,5 @@
 ﻿name: Reverb
-version: "1.1.37"
+version: "1.1.38"
 slug: reverb
 description: >-
   Reverb web reader + recommender in one add-on. Serves the web RSS reader over
@@ -21,8 +21,10 @@ panel_title: Reverb
 # at http://<HA-IP>:8100. The web reader uses it same-origin via nginx /recs/ (localhost).
 ports:
   "8100/tcp": 8100
+  "8102/tcp": 8102
 ports_description:
   "8100/tcp": Recommender API for the Reverb Android app (GET /related, /catalog, /discussions, /health)
+  "8102/tcp": Reverb web reader without Home Assistant login (http://<HA-IP>:8102)
 # One shared config for both halves.
 #   freshrss_upstream: the FreshRSS add-on base URL (SAME host:port as Reverb, WITHOUT
 #     /api/greader.php), e.g. http://192.168.1.50:7077 â€” used by both the /api/ proxy and
