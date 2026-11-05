@@ -278,6 +278,7 @@ FOLDER_GENRE = {
     "moodboard": "design",
     "design": "design",
     "cooking": "cooking",
+    "recipes": "cooking",
     "games": "games",
     "art": "art",
     "culture": "culture",
